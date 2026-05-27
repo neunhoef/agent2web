@@ -1,7 +1,7 @@
 # agent2web — Design Document
 
-**Version:** 1.0  
-**Status:** First version
+**Version:** 1.1  
+**Status:** Revised — no auto-commit; selective commit page; working-tree diff
 
 ---
 
@@ -16,11 +16,16 @@ instance on a home server:
 2. Review and edit the transcribed text before dispatching.
 3. The server runs ForgeCode non-interactively, resuming the current
    conversation or starting a new one.
-4. When the agent finishes, it commits the changes.
-5. The browser displays a high-quality syntax-highlighted HTML diff of
-   the resulting commit(s).
+4. When the agent finishes, the working-tree diff is available for
+   review.
+5. The user navigates to the commit page, selects the files to include,
+   enters a subject line, and commits. The accumulated agent prompts are
+   appended to the commit body automatically (formatted with `par`).
 6. Repeat — each subsequent run continues the same ForgeCode
    conversation by default, preserving context across turns.
+
+The agent **never commits automatically**. The developer stays in full
+control of what goes into each commit and what the commit message says.
 
 The entire UI is a server-rendered web application. JavaScript is used
 only where it meaningfully improves the experience: audio capture, the
@@ -34,7 +39,7 @@ is plain HTML rendered on the server.
 ### Goals
 
 - Single-binary Rust server; no runtime dependencies beyond `git`,
-  `forge`, and an STT provider.
+  `forge`, `par`, and an STT provider.
 - Fully usable on Android/iOS mobile browsers; also comfortable on
   desktop.
 - Voice input with high STT quality; transcript is editable before
@@ -42,7 +47,13 @@ is plain HTML rendered on the server.
 - Live streaming of agent output so the user can follow progress.
 - Beautiful, syntax-highlighted, multi-file HTML diff output via
   diff2html (rendered server-side into a full HTML page).
-- Diff view supports both single-commit and multi-commit (range) review.
+- **Working-tree diff** (`git diff HEAD`) showing all uncommitted changes
+  at a glance after each agent run.
+- Diff view supports both working-tree and commit-range review.
+- Selective file commit: the user chooses exactly which modified files
+  to stage and commit from a dedicated commit page.
+- Commit body automatically includes all agent prompts since the last
+  commit, formatted with `par` for readability.
 - ForgeCode conversation continuity across multiple runs; explicit UI
   controls to start a new conversation.
 - Minimal JavaScript — only where it makes a qualitative difference.
@@ -56,6 +67,7 @@ is plain HTML rendered on the server.
 - Push notifications or background polling (the user watches live output
   or returns to the page).
 - Windows or macOS support for the server (Linux target only).
+- Automatic commits after agent runs.
 
 ---
 
@@ -73,6 +85,7 @@ Mobile Browser
 │  │ (axum)   │   │ Handler: /run   │ │  ← start agent run
 │  │          │   │ Handler: /stream│ │  ← SSE live output
 │  │          │   │ Handler: /diff  │ │  ← rendered diff HTML
+│  │          │   │ Handler: /commit│ │  ← commit page + action
 │  │          │   │ Handler: /audio │ │  ← STT upload endpoint
 │  │          │   │ Handler: /conv  │ │  ← conversation management
 │  └──────────┘   └─────────────────┘ │
@@ -254,20 +267,23 @@ small amount of hand-written JS, described in §8.
 | `POST` | `/audio` | Upload audio blob → returns transcript JSON |
 | `POST` | `/run` | Submit prompt text → starts agent run, returns 303 redirect to `/` |
 | `GET` | `/stream` | SSE endpoint; streams agent stdout/stderr |
-| `GET` | `/diff` | Rendered diff HTML fragment for last commit (HTMX swap target) |
+| `GET` | `/diff` | Working-tree diff (`git diff HEAD`) rendered via diff2html |
+| `GET` | `/diff/commit?ref=REF` | Diff introduced by a single commit (default: `HEAD`) |
 | `GET` | `/diff/range?from=SHA&to=SHA` | Diff between two arbitrary commits |
 | `POST` | `/conversation/new` | Reset active conversation; next run starts fresh |
 | `GET` | `/conversation/list` | HTML fragment listing conversation history (HTMX swap target) |
 | `POST` | `/conversation/resume` | Resume a specific past conversation by ID (form field: `id`) |
-| `POST` | `/commit` | Commit working-tree changes with a user-supplied message |
+| `GET` | `/commit` | Commit page: file selector, subject input, prompt preview |
+| `POST` | `/commit` | Execute the commit with selected files and subject |
 | `GET` | `/health` | `200 OK` plain text — for uptime monitoring |
 
 ### 5.1 `GET /`
 
 Returns the full UI shell (see §7). Includes current run status and
 conversation status reflected in the page. If a run is in progress, the
-page auto-connects to `/stream`. If a run just completed, it includes
-the diff inline or a link to `/diff`.
+page auto-connects to `/stream`. After a run completes, a **[ Review &
+Commit ]** link appears pointing to `GET /commit`, and a **[ View Diff ]**
+link points to `GET /diff` to show the working-tree diff.
 
 ### 5.2 `POST /audio`
 
@@ -284,8 +300,7 @@ the diff inline or a link to `/diff`.
 
 ### 5.3 `POST /run`
 
-- Form fields: `prompt` (text string), `conversation_id` (optional
-  override; if absent, uses `ConvState::active_id`).
+- Form fields: `prompt` (text string), `password` (optional, see §14).
 - Server validates: non-empty prompt, no run already in progress.
 - Spawns the agent subprocess asynchronously (see §6).
 - Returns `303 See Other` → `/` so the browser reloads, showing the
@@ -300,28 +315,44 @@ the diff inline or a link to `/diff`.
   data: [forge] Writing patch to src/parser.rs…\n\n
   data: __DONE__\n\n
   ```
-- The `__DONE__` sentinel causes the HTMX SSE listener to trigger a swap
-  of the diff area.
+- The `__DONE__` sentinel causes the client JS to reload the page, which
+  then shows the completed run status with links to the diff and commit
+  page.
 - The stream stays open until the run completes or the client
   disconnects.
 
-### 5.5 `GET /diff` and `GET /diff/range`
+### 5.5 `GET /diff`, `GET /diff/commit`, and `GET /diff/range`
 
-- Runs `git diff HEAD~1` (or the specified range) in the configured
-  project directory.
-- Pipes the unified diff text through diff2html-cli (see §9).
-- Returns a complete, self-contained HTML fragment ready to be inserted
-  into the page's diff container, or a full HTML page if requested
-  standalone (`?full=1` or `Accept: text/html` without HTMX headers).
+Three diff modes are available, all rendered via diff2html-cli (see §9):
+
+**`GET /diff`** — working-tree diff (all uncommitted changes):
+- Runs `git diff HEAD` in `project_dir`.
+- This is the primary diff view after an agent run, showing everything
+  that changed since the last commit.
+- If the working tree is clean, returns a page indicating no changes.
+
+**`GET /diff/commit?ref=REF`** — single-commit diff:
+- `ref` defaults to `HEAD` if absent (shows the most recent commit).
+- Runs `git diff <ref>~1..<ref>`.
+- Useful for reviewing what was introduced by a specific past commit.
+
+**`GET /diff/range?from=SHA&to=SHA`** — range diff:
+- `from` defaults to `HEAD~1`, `to` defaults to `HEAD`.
+- Runs `git diff <from>..<to>`.
+- Useful for cumulative review across several commits.
+
+All three return a complete standalone HTML page (the diff2html output).
+The user navigates to the diff page and uses the browser Back button to
+return to the main UI.
 
 ### 5.6 `POST /conversation/new`
 
 - Optional form field: `label` (short description of the new work,
   stored in `ConvEntry`).
-- Sets `ConvState::active_id = None`.
+- Runs `forge conversation new`, stores the returned ID as
+  `ConvState::active_id`, and appends a new `ConvEntry` to `history`.
 - Returns `303 See Other` → `/`.
-- The UI reflects "No active conversation — next run will start a new
-  one."
+- The UI reflects the new conversation ID in the status bar.
 
 ### 5.7 `GET /conversation/list`
 
@@ -338,29 +369,108 @@ the diff inline or a link to `/diff`.
 - Sets `ConvState::active_id = Some(id)`.
 - Returns `303 See Other` → `/`.
 
-### 5.9 `POST /commit`
+### 5.9 `GET /commit` — Commit Page
 
-- Form fields: `message` (commit subject line, required), `password`.
-- Validates the password (see §14).
+Returns a full standalone HTML page with:
+
+1. **File selector** — runs `git status --porcelain` to enumerate all
+   modified, added, deleted, and renamed files in the working tree.
+   Each file is shown as a checkbox row (checked by default). The user
+   can deselect files they do not want to include in this commit.
+
+2. **Diff link per file** — each file row optionally links to
+   `GET /diff` filtered to that path (future enhancement; for now a
+   single "View full diff" link points to `GET /diff`).
+
+3. **Subject input** — a single-line `<input>` for the commit subject
+   line (required).
+
+4. **Prompt preview** — a read-only list of all prompts accumulated in
+   `AppState::prompts_since_commit` since the last commit, so the user
+   can confirm what context will be included in the commit body.
+
+5. **[ Commit Selected Files ]** button — submits `POST /commit`.
+
+If there are no changed files, the page shows a notice and the commit
+button is absent.
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  agent2web  [project: my-proj]   Password: [__]            │
+├────────────────────────────────────────────────────────────┤
+│  Commit Changes                           ← Back to Home   │
+│                                                            │
+│  Changed files (select to include):                        │
+│  ☑ M  src/main.rs                                          │
+│  ☑ M  src/agent.rs                                         │
+│  ☐ ?  scratch.txt                                          │
+│                                                            │
+│  Subject: [_______________________________]                │
+│                                                            │
+│  Prompts to be appended to commit body:                    │
+│  · refactor the parser to handle edge cases                │
+│  · add unit tests for the new token types                  │
+│                                                            │
+│  [ Commit Selected Files ]   [ View Diff ]                 │
+└────────────────────────────────────────────────────────────┘
+```
+
+### 5.10 `POST /commit` — Execute Commit
+
+- Form fields: `message` (commit subject, required), `files[]` (zero or
+  more selected file paths), `password`.
+- Validates password (see §14).
 - Rejects if a run is currently in progress (409 Conflict).
-- Runs `git add -A` followed by `git commit` in `project_dir`. The
-  commit message is composed as follows:
-  - **Subject line:** the value of `message` as supplied by the user.
-  - **Body:** a blank line followed by a bulleted list of all prompts
-    recorded in `AppState::prompts_since_commit` since the previous commit,
-    oldest first:
-    ```
-    Prompts since last commit:
-    - refactor the parser to handle edge cases
-    - add unit tests for the new token types
-    ```
-- On success, clears `AppState::prompts_since_commit` and returns `303
+- Rejects if `files[]` is empty or `message` is blank (400 Bad Request).
+- Stages **only** the selected files:
+  ```sh
+  git add -- <file1> <file2> …
+  ```
+- Builds the commit message (see §5.10.1 below).
+- Runs `git commit -F -` passing the message via stdin (avoids shell
+  quoting issues with multi-line messages).
+- On success: clears `AppState::prompts_since_commit` and returns `303
   See Other` → `/`.
-- On failure (nothing to commit, git error), returns an error page with
-  the git output.
-- `prompts_since_commit` is populated by `POST /run`: every accepted
-  prompt is appended to the list after the run is dispatched. The list is
-  never cleared automatically — only by a successful `POST /commit`.
+- On failure: returns an error page with the git output.
+
+#### 5.10.1 Commit Message Format
+
+The commit message is:
+
+```
+<subject line>
+
+Prompts since last commit:
+
+<formatted prompt body>
+```
+
+The `<formatted prompt body>` is built by:
+1. Joining all prompts with a blank line between each.
+2. Piping the result through `par 72` for line-wrapping to 72 columns.
+
+Example with two prompts:
+
+```
+refactor the parser to handle edge cases
+
+Prompts since last commit:
+
+refactor the parser to handle edge cases
+
+add unit tests for the new token types
+```
+
+After wrapping, long prompts are reflowed to 72 columns. `par` is
+expected to be on `$PATH`; if it is absent, the body is included
+without reflowing (plain concatenation).
+
+#### 5.10.2 File Path Security
+
+File paths submitted as `files[]` are validated against the list
+returned by `git status --porcelain` at request time. Any path not in
+that set is rejected (400 Bad Request). This prevents path-traversal
+attacks and ensures only files git knows about can be staged.
 
 ---
 
@@ -375,6 +485,8 @@ POST /run (prompt)
     │
     ├─ Set RunState { status: Running, output_buf: vec![] }
     │
+    ├─ Append prompt to prompts_since_commit
+    │
     ├─ Spawn tokio task:
     │       │
     │       ├─ Run: forge -p "<prompt>"
@@ -382,7 +494,7 @@ POST /run (prompt)
     │       │        conversation on disk — no ID flag needed)
     │       │
     │       ├─ If active_id is None (first ever run):
-    │       │       Run: forge conversation list --since=<before_run_time>
+    │       │       Run: forge conversation list
     │       │       Capture new conversation ID from output
     │       │       Set ConvState::active_id = Some(new_id)
     │       │       Append ConvEntry to ConvState::history
@@ -393,16 +505,18 @@ POST /run (prompt)
     │       │       (broadcast on SSE channel)
     │       │
     │       ├─ On exit code 0:
-    │       │       Run: git add -A
-    │       │       Run: forge commit   (AI-generated commit message)
-    │       │         or: git commit -m "agent: <prompt truncated>"
-    │       │       Set RunState { status: Done(commit_sha) }
+    │       │       Set RunState { status: Done }
+    │       │       (no automatic commit)
     │       │
     │       └─ On non-zero exit:
-    │               Set RunState { status: Failed(exit_code) }
+    │               Set RunState { status: Failed(reason) }
     │
     └─ Return 303 → /
 ```
+
+After the run completes the working tree will have uncommitted changes.
+The user navigates to `GET /diff` to review them and to `GET /commit`
+to stage and commit the files they want.
 
 `RunState` and `ConvState` are both fields on `AppState`, wrapped in
 `Arc`. Each is protected by its own `Mutex`, held only for reads/writes
@@ -415,15 +529,16 @@ active returns `409 Conflict` with a human-readable error page.
 
 ### 6.2 Timeouts
 
-A configurable `run_timeout_seconds` (default: 600) kills the subprocess
+A configurable `run_timeout` (default: 600 seconds) kills the subprocess
 if it exceeds the limit and transitions the run to `Failed(timeout)`.
 
 ---
 
 ## 7. UI Structure
 
-The UI is a single HTML page with seven logical sections, rendered
-top-to-bottom:
+### 7.1 Main Page (`GET /`)
+
+The main page has five logical sections, rendered top-to-bottom:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -442,16 +557,11 @@ top-to-bottom:
 │  │ [forge] Writing src/parser.rs…          │    │
 │  └─────────────────────────────────────────┘    │
 ├─────────────────────────────────────────────────┤
-│  Commit  [Subject line input________]  [Commit] │  ← manual commit section
-├─────────────────────────────────────────────────┤
-│  Diff  [HEAD~1]  [HEAD~3..HEAD]  [···]          │  ← diff controls
-│  ┌─────────────────────────────────────────┐    │
-│  │ <diff2html rendered output>             │    │
-│  └─────────────────────────────────────────┘    │
+│  [ View Working-Tree Diff ]  [ Review & Commit ]│  ← action links
 └─────────────────────────────────────────────────┘
 ```
 
-### 7.1 Password Field
+### 7.2 Password Field
 
 A compact `<input type="password" id="password">` field is placed in the
 page header, persistent across all interactions. A small JS snippet (~15
@@ -466,7 +576,7 @@ page or session cookie.
 If the server has no password configured (`password = ""`), the field is
 hidden and no validation is performed server-side.
 
-### 7.2 Conversation Status Bar
+### 7.3 Conversation Status Bar
 
 A persistent bar beneath the header shows:
 - The active conversation ID (truncated to 8 chars) and its label if
@@ -480,34 +590,31 @@ A persistent bar beneath the header shows:
 When `active_id` is `None`, the bar shows: *"No active conversation —
 next run will start a new one."*
 
-### 7.3 Manual Commit Section
+### 7.4 Action Links
 
-A compact section below the agent output area allows the user to commit
-the current working-tree state at any time, independently of an agent
-run:
+A row of action links beneath the agent output area:
 
-- A single-line text input for the commit subject.
-- A **[ Commit ]** button that submits `POST /commit` with the subject
-  and the password.
-- The section shows the number of accumulated prompts that will be
-  appended to the commit body (e.g. *"2 prompts will be appended to
-  message body"*), so the user knows what context will be recorded.
-- The button is disabled while a run is in progress.
+- **[ View Working-Tree Diff ]** — links to `GET /diff`, opening the
+  working-tree diff page in a new or current tab.
+- **[ Review & Commit ]** — links to `GET /commit`, opening the commit
+  page where files can be selected and a commit created.
 
-### 7.4 Responsiveness
+These links are always visible. The commit page will simply show "no
+changed files" if the working tree is clean.
+
+### 7.5 Responsiveness
 
 - Layout uses CSS Flexbox/Grid with a single-column mobile layout
-  (≤768px) and a two-column option on desktop (prompt+output left, diff
-  right).
+  (≤768px) and a two-column option on desktop (prompt+output left,
+  action links right).
 - Font sizes and tap targets are sized for mobile-first (minimum 44px
   tap target height per WCAG).
-- The diff area is scrollable independently of the page on mobile.
 - No external CSS frameworks. Custom CSS is inlined into the HTML shell
   at build time via `include_str!()`.
 
-### 7.5 Page States
+### 7.6 Page States
 
-The page reflects the server's `RunState` and `ConvState` at render
+The main page reflects the server's `RunState` and `ConvState` at render
 time:
 
 | State | UI Behavior |
@@ -515,7 +622,7 @@ time:
 | `Idle, no conversation` | Prompt area enabled; conversation bar shows "no active conversation" |
 | `Idle, conversation active` | Prompt area enabled; conversation bar shows ID and run count |
 | `Running` | Prompt area disabled; output stream area visible and auto-scrolling; SSE connected |
-| `Done(sha)` | Output area shows completion; diff area loads and shows new diff |
+| `Done` | Output area shows completion notice; action links prominent |
 | `Failed(reason)` | Error message shown; prompt area re-enabled |
 
 ---
@@ -551,19 +658,15 @@ recorder.onstop = async () => {
 - The transcript is placed into the `<textarea>` for review and editing.
 - Error states (microphone denied, upload failed) are shown inline.
 
-### 8.2 HTMX (`~14 kB, CDN or self-hosted`)
+### 8.2 SSE Live Output (`~40 lines`)
 
-Used for:
-- SSE connection to `/stream`, appending lines to the output `<div>`.
-- Swapping the diff container content when the run completes (triggered
-  by the `__DONE__` SSE event).
-- Loading diff fragments for the diff range selector without full page
-  reload.
-- Loading the conversation history panel from `/conversation/list`.
+When the page loads in `Running` state (detected via the
+`data-sse-running` attribute on the output `<div>`), a plain
+`EventSource` connects to `/stream`. Each `message` event appends a
+line to the output box. The `__DONE__` sentinel causes the client to
+close the connection and reload the page.
 
-All HTMX behavior is expressed as HTML attributes (`hx-get`,
-`hx-trigger`, `hx-swap`, `sse-connect`, `sse-swap`) — no JS code
-required.
+No HTMX is used for SSE; the hand-written JS handles all of it.
 
 ### 8.3 Auto-scroll (`~10 lines`)
 
@@ -579,6 +682,7 @@ A `MutationObserver` on the output container handles this in ~10 lines.
 - Syntax highlighting — embedded in the diff2html-generated HTML.
 - State management — reflected in server-rendered HTML on each full
   page load.
+- File selection on the commit page — native HTML checkboxes.
 
 ---
 
@@ -600,39 +704,46 @@ crate) remains possible — the diff rendering logic is isolated in
 
 ### 9.2 Invocation
 
+**Working-tree diff** (`GET /diff`):
+
 ```sh
-git diff --stat -p HEAD~1 \
+git diff HEAD \
   | diff2html --style line \
               --syntax-highlight \
               --file-list-toggle \
-              --no-header \
-              --output stdout
+              -i stdin \
+              -o stdout
 ```
 
-For multi-commit diffs:
+**Single-commit diff** (`GET /diff/commit?ref=REF`):
+
+```sh
+git diff <ref>~1..<ref> | diff2html …
+```
+
+**Range diff** (`GET /diff/range?from=SHA&to=SHA`):
 
 ```sh
 git diff <from_sha>..<to_sha> | diff2html …
 ```
 
-The resulting HTML fragment is wrapped in the server's page template
-and served. The server passes `--no-header` so the output is a fragment
-suitable for HTMX swapping; a standalone full-page wrapper is added
-server-side when `?full=1` is requested.
+All three modes return a complete standalone HTML page (the diff2html
+output is self-contained). The server renders this directly; no wrapper
+template is needed. The user navigates to the diff page and uses the
+browser Back button to return.
 
 ### 9.3 Standalone Diff Page
 
-`GET /diff` returns a complete standalone HTML page when accessed
-directly (detected via `?full=1` or absence of the `HX-Request` header).
-This makes it easy to bookmark a specific commit diff or share it within
-a local network.
+Each `GET /diff*` endpoint returns a complete standalone HTML page.
+Bookmarking a specific commit diff or sharing it within a local network
+is straightforward.
 
-### 9.4 Diff History
+### 9.4 Diff History (future)
 
-The server maintains an in-memory list of recent commit SHAs (up to a
-configurable limit, default 20). The UI renders these as buttons in the
-diff header, allowing the user to quickly load any recent diff or a
-cumulative range.
+The server may maintain an in-memory list of recent commit SHAs (up to a
+configurable limit, default 20). The UI could render these as quick-jump
+buttons on the diff page, allowing the user to load any recent commit
+diff without knowing the SHA.
 
 ---
 
@@ -793,8 +904,6 @@ key          = "tls/key.pem"            # relative to the config file location)
 
 [forge]
 binary       = "forge"                  # path or name on $PATH
-commit_cmd   = "forge commit"           # or "git commit -m 'agent run'"
-auto_push    = false                    # if true, run git push after commit
 
 [stt]
 provider     = "whisper_api"
@@ -804,6 +913,10 @@ api_key      = ""                       # override with AGENT2WEB_STT_API_KEY
 max_history  = 20                       # number of recent commits to track
 context_lines = 5                       # lines of context in diff output
 ```
+
+> **Note:** The `commit_cmd` and `auto_push` fields from earlier versions
+> are removed. The server never commits automatically; all commits are
+> initiated by the user from the commit page.
 
 ---
 
@@ -823,9 +936,9 @@ agent2web/
 │   │   ├── index.rs     — GET /
 │   │   ├── run.rs       — POST /run
 │   │   ├── stream.rs    — GET /stream (SSE)
-│   │   ├── diff.rs      — GET /diff, GET /diff/range
+│   │   ├── diff.rs      — GET /diff, GET /diff/commit, GET /diff/range
 │   │   ├── audio.rs     — POST /audio
-│   │   ├── commit.rs    — POST /commit
+│   │   ├── commit.rs    — GET /commit (page), POST /commit (action)
 │   │   └── conversation.rs  — POST /conversation/new, GET /conversation/list,
 │   │                          POST /conversation/resume
 │   ├── agent.rs         — ForgeCode subprocess management, conversation ID
@@ -873,6 +986,8 @@ single self-contained binary.
 External runtime dependencies:
 - `forge` (ForgeCode binary)
 - `git`
+- `par` (paragraph formatter; used to reflow the commit body. Install
+  via your package manager: `apt install par` or `brew install par`)
 - `node` + `diff2html-cli` (`npm install -g diff2html-cli`)
 - `whisper-server` (built from `whisper.cpp` with `-DGGML_CUDA=1`; runs as a persistent local service)
 - `ffmpeg` (audio format conversion: `webm/opus` → 16 kHz WAV)
@@ -890,6 +1005,9 @@ following mitigations apply:
   -c`.
 - Conversation IDs are validated against `ConvState::history` before
   being passed to `forge`; arbitrary strings are rejected.
+- File paths submitted to `POST /commit` are validated against the
+  current `git status --porcelain` output; only known changed files can
+  be staged.
 - The `project_dir` is configured at startup and is not
   user-controllable at runtime.
 - Audio uploads are size-limited (configurable, default 25 MB) to
@@ -904,8 +1022,9 @@ All endpoints that produce a server-side action (`POST /run`,
 /conversation/resume`) require a `password` form field. The server
 compares it to the value of `server.password` in the configuration (or
 the `AGENT2WEB_PASSWORD` environment variable). A mismatch returns `403
-Forbidden`. Read-only endpoints (`GET /`, `GET /stream`, `GET /diff`,
-`GET /conversation/list`, `GET /health`) are not password-protected.
+Forbidden`. Read-only endpoints (`GET /`, `GET /stream`, `GET /diff*`,
+`GET /commit`, `GET /conversation/list`, `GET /health`) are not
+password-protected.
 
 When `server.password` is empty (the default), authentication is
 disabled entirely — no password field is required or checked.
@@ -938,12 +1057,13 @@ nginx or Caddy.
 |-----------|-------|
 | **M1 — Skeleton** | Server boots, serves static HTML shell, `/health` works |
 | **M2 — Diff View** | `GET /diff` renders a real commit diff via diff2html; multi-file, syntax-highlighted |
-| **M3 — Agent Run** | `POST /run` spawns `forge -p`, streams output via SSE, commits on success; new conversation created automatically |
-| **M4 — Conversation Management** | `ConvState` tracking, `/conversation/new`, `/conversation/list`, `/conversation/resume`; conversation status bar in UI |
-| **M5 — Voice Input** | Audio capture in browser, upload to `/audio`, Whisper API transcription, editable textarea |
-| **M6 — Polish** | Mobile layout refinement, diff history nav, error states, timeouts |
-| **M7 — Offline STT** | `whisper_cpp` provider implementation for fully local operation |
-| **M8 — Security** | Password authentication middleware; optional TLS listener with `axum-server`/`rustls`; `tls/generate.sh` script; manual commit button with accumulated-prompt body |
+| **M3 — Agent Run** | `POST /run` spawns `forge -p`, streams output via SSE; no auto-commit; new conversation detected automatically |
+| **M4 — Commit Page** | `GET /commit` file-selector page; `POST /commit` stages selected files, builds commit message with `par`-formatted prompt body; `GET /diff` updated to show working-tree diff; `GET /diff/commit` added |
+| **M5 — Conversation Management** | `ConvState` tracking, `/conversation/new`, `/conversation/list`, `/conversation/resume`; conversation status bar in UI |
+| **M6 — Voice Input** | Audio capture in browser, upload to `/audio`, Whisper API transcription, editable textarea |
+| **M7 — Polish** | Mobile layout refinement, diff history nav, error states, timeouts |
+| **M8 — Offline STT** | `whisper_cpp` provider implementation for fully local operation |
+| **M9 — Security** | Password authentication middleware; optional TLS listener with `axum-server`/`rustls`; `tls/generate.sh` script |
 
 ---
 
@@ -960,9 +1080,10 @@ nginx or Caddy.
     non-interactively. The adapter in `src/agent.rs` is therefore simple and
     well-defined.
 
-2. **Auto-push:** Disabled by default. When enabled, `git push` runs
-    after commit. Should there be a confirmation step in the UI before push,
-    or is commit-then-push always the right behaviour?
+2. **Auto-push after commit:** The commit page could offer an optional
+    "Push after commit" checkbox. Currently there is no auto-push; the
+    user would need to push from a terminal. A future milestone could add
+    a `POST /push` endpoint or a checkbox on the commit page.
 
 3. **Multi-project support:** Currently one `project_dir` per server
     instance. Running multiple instances on different ports is the simplest
@@ -975,8 +1096,12 @@ nginx or Caddy.
     the server.
 
 5. **Streaming diff updates:** Currently the diff is loaded once
-    after the run completes. For very long-running agents that commit
-    incrementally, streaming intermediate diffs could be valuable.
+    after the user navigates to the diff page. For very long-running agents
+    that modify many files, streaming intermediate diffs could be valuable.
+
+6. **`par` availability:** If `par` is not installed, the commit body
+    is included without reflowing. A future improvement could bundle a
+    simple Rust line-wrapper as a fallback so there is no hard dependency.
 
 ---
 
