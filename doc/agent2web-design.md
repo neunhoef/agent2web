@@ -1,22 +1,31 @@
 # agent2web — Design Document
 
-**Version:** 0.5  
-**Status:** Draft
+**Version:** 1.0  
+**Status:** First version
 
 ---
 
 ## 1. Overview
 
-`agent2web` is a small, self-hosted Rust web server that acts as a mobile-friendly control panel for a local AI coding agent (ForgeCode). It closes the loop between a developer on the go and a running ForgeCode instance on a home server:
+`agent2web` is a small, self-hosted Rust web server that acts as a
+mobile-friendly control panel for a local AI coding agent (ForgeCode).
+It closes the loop between a developer on the go and a running ForgeCode
+instance on a home server:
 
 1. Dictate a task via voice on a mobile browser.
 2. Review and edit the transcribed text before dispatching.
-3. The server runs ForgeCode non-interactively, resuming the current conversation or starting a new one.
+3. The server runs ForgeCode non-interactively, resuming the current
+   conversation or starting a new one.
 4. When the agent finishes, it commits the changes.
-5. The browser displays a high-quality syntax-highlighted HTML diff of the resulting commit(s).
-6. Repeat — each subsequent run continues the same ForgeCode conversation by default, preserving context across turns.
+5. The browser displays a high-quality syntax-highlighted HTML diff of
+   the resulting commit(s).
+6. Repeat — each subsequent run continues the same ForgeCode
+   conversation by default, preserving context across turns.
 
-The entire UI is a server-rendered web application. JavaScript is used only where it meaningfully improves the experience: audio capture, the editable transcript field, and the live progress stream. Everything else is plain HTML rendered on the server.
+The entire UI is a server-rendered web application. JavaScript is used
+only where it meaningfully improves the experience: audio capture, the
+editable transcript field, and the live progress stream. Everything else
+is plain HTML rendered on the server.
 
 ---
 
@@ -24,21 +33,28 @@ The entire UI is a server-rendered web application. JavaScript is used only wher
 
 ### Goals
 
-- Single-binary Rust server; no runtime dependencies beyond `git`, `forge`, and an STT provider.
-- Fully usable on Android/iOS mobile browsers; also comfortable on desktop.
-- Voice input with high STT quality; transcript is editable before submission.
+- Single-binary Rust server; no runtime dependencies beyond `git`,
+  `forge`, and an STT provider.
+- Fully usable on Android/iOS mobile browsers; also comfortable on
+  desktop.
+- Voice input with high STT quality; transcript is editable before
+  submission.
 - Live streaming of agent output so the user can follow progress.
-- Beautiful, syntax-highlighted, multi-file HTML diff output via diff2html (rendered server-side into a full HTML page).
+- Beautiful, syntax-highlighted, multi-file HTML diff output via
+  diff2html (rendered server-side into a full HTML page).
 - Diff view supports both single-commit and multi-commit (range) review.
-- ForgeCode conversation continuity across multiple runs; explicit UI controls to start a new conversation.
+- ForgeCode conversation continuity across multiple runs; explicit UI
+  controls to start a new conversation.
 - Minimal JavaScript — only where it makes a qualitative difference.
 
 ### Non-Goals
 
 - Project configuration, credential management, or ForgeCode setup.
-- Multi-user access control or authentication (assumed to run behind a VPN or SSH tunnel, or with HTTP basic auth added separately).
+- Multi-user access control or authentication (assumed to run behind a
+  VPN or SSH tunnel, or with HTTP basic auth added separately).
 - GitHub / PR integration.
-- Push notifications or background polling (the user watches live output or returns to the page).
+- Push notifications or background polling (the user watches live output
+  or returns to the page).
 - Windows or macOS support for the server (Linux target only).
 
 ---
@@ -82,7 +98,11 @@ Mobile Browser
      (Whisper / Deepgram)
 ```
 
-`agent2web` is a single process. It spawns subprocesses for `forge` and `git`. There is no embedded database. All state is held in memory; if the server restarts, the active conversation ID is lost (ForgeCode's conversation history persists on disk in `~/.forge/`, so it can be recovered manually if needed).
+`agent2web` is a single process. It spawns subprocesses for `forge` and
+`git`. There is no embedded database. All state is held in memory; if
+the server restarts, the active conversation ID is lost (ForgeCode's
+conversation history persists on disk in `~/.forge/`, so it can be
+recovered manually if needed).
 
 ---
 
@@ -90,15 +110,27 @@ Mobile Browser
 
 ### 4.1 How ForgeCode Manages Conversations
 
-ForgeCode's ZSH plugin is the reference implementation for how conversation state is managed in a non-interactive workflow. Understanding it directly informs the `agent2web` design.
+ForgeCode's ZSH plugin is the reference implementation for how
+conversation state is managed in a non-interactive workflow.
+Understanding it directly informs the `agent2web` design.
 
 From the official ZSH docs:
 
-> *"Prompts go to your last-used agent. If this is your first interaction, it defaults to ForgeCode. The conversation continues across prompts until you run `:new`."*
+> *"Prompts go to your last-used agent. If this is your first
+interaction, it defaults to ForgeCode. The conversation continues across
+prompts until you run `:new`."*
 
-The ZSH plugin holds the active conversation ID as a **shell session variable** — it persists for the lifetime of a terminal session. Sending a bare `:` prompt always continues the current conversation. `:new` clears the context and starts fresh. `:conversation` opens a fuzzy picker to switch to any saved conversation; `:-` jumps back to the previously active one.
+The ZSH plugin holds the active conversation ID as a **shell session
+variable** — it persists for the lifetime of a terminal session.
+Sending a bare `:` prompt always continues the current conversation.
+`:new` clears the context and starts fresh. `:conversation` opens a
+fuzzy picker to switch to any saved conversation; `:-` jumps back to the
+previously active one.
 
-This maps cleanly onto `agent2web`: the server process is the "session", the in-memory `ConvState` plays the role of the shell session variable, and the UI provides the equivalent of `:new` and `:conversation` as explicit buttons.
+This maps cleanly onto `agent2web`: the server process is the "session",
+the in-memory `ConvState` plays the role of the shell session variable,
+and the UI provides the equivalent of `:new` and `:conversation` as
+explicit buttons.
 
 ### 4.2 ForgeCode CLI Primitives
 
@@ -123,13 +155,27 @@ forge conversation rename <id> <name>
 forge conversation delete <id>
 ```
 
-**Key insight from the ZSH plugin source:** `forge -p "<prompt>"` always continues the most recently active conversation on disk — it does not require passing a conversation ID explicitly. ForgeCode tracks the "current conversation" as part of its own persistent state in `~/.forge/`. The ZSH plugin stores the active ID in a shell variable only for its own bookkeeping (e.g. display in RPROMPT, enabling `:-` to jump back). The `forge` binary itself picks up the last conversation automatically.
+**Key insight from the ZSH plugin source:** `forge -p "<prompt>"`
+always continues the most recently active conversation on disk —
+it does not require passing a conversation ID explicitly. ForgeCode
+tracks the "current conversation" as part of its own persistent state
+in `~/.forge/`. The ZSH plugin stores the active ID in a shell variable
+only for its own bookkeeping (e.g. display in RPROMPT, enabling `:-` to
+jump back). The `forge` binary itself picks up the last conversation
+automatically.
 
-**Consequence for `agent2web`:** Starting a new conversation requires `forge conversation new` to obtain a fresh ID, followed immediately by `forge -p "<prompt>"`. ForgeCode will then use that new conversation for subsequent runs. There is no need for a `--conversation-id` flag passed on every invocation; the server only needs to call `forge conversation new` when the user explicitly requests a fresh start. Normal "resume" behaviour is the default.
+**Consequence for `agent2web`:** Starting a new conversation requires
+`forge conversation new` to obtain a fresh ID, followed immediately by
+`forge -p "<prompt>"`. ForgeCode will then use that new conversation for
+subsequent runs. There is no need for a `--conversation-id` flag passed
+on every invocation; the server only needs to call `forge conversation
+new` when the user explicitly requests a fresh start. Normal "resume"
+behaviour is the default.
 
 ### 4.3 ConvState
 
-The server tracks conversation state in `ConvState`, protected by a `Mutex`:
+The server tracks conversation state in `ConvState`, protected by a
+`Mutex`:
 
 ```rust
 pub struct ConvState {
@@ -150,7 +196,12 @@ pub struct ConvEntry {
 }
 ```
 
-On server start, `active_id` is `None`. The first `POST /run` implicitly creates a ForgeCode conversation (by calling `forge -p` and then reading the new ID via `forge conversation list`). Subsequent runs call `forge -p` directly — ForgeCode resumes the last active conversation automatically. `active_id` is updated whenever `forge conversation new` is invoked.
+On server start, `active_id` is `None`. The first `POST /run` implicitly
+creates a ForgeCode conversation (by calling `forge -p` and then
+reading the new ID via `forge conversation list`). Subsequent runs call
+`forge -p` directly — ForgeCode resumes the last active conversation
+automatically. `active_id` is updated whenever `forge conversation new`
+is invoked.
 
 ### 4.4 The Run Invocation Pattern
 
@@ -165,7 +216,9 @@ Normal resume (every subsequent POST /run):
     increment ConvEntry::run_count
 ```
 
-No flags are required on the normal path. The "new conversation" path only requires `forge conversation new` to obtain the ID for our own bookkeeping; ForgeCode handles the rest.
+No flags are required on the normal path. The "new conversation" path
+only requires `forge conversation new` to obtain the ID for our own
+bookkeeping; ForgeCode handles the rest.
 
 ### 4.5 Starting a New Conversation
 
@@ -173,18 +226,27 @@ No flags are required on the normal path. The "new conversation" path only requi
 
 1. Runs `forge conversation new`, capturing the printed ID from stdout.
 2. Stores it as `ConvState::active_id`.
-3. Appends a new `ConvEntry` to `history` (label set from the first prompt of the next run).
+3. Appends a new `ConvEntry` to `history` (label set from the first
+   prompt of the next run).
 4. Returns `303 See Other` → `/`.
 
-The old conversation ID remains in `history`, resumable via `POST /conversation/resume`.
+The old conversation ID remains in `history`, resumable via `POST
+/conversation/resume`.
 
 ---
 
 ## 5. HTTP API
 
-All routes return HTML unless noted. The UI shell is a single HTML page; partial updates use HTMX for the progress stream and diff swap, avoiding a full page reload while staying within the no-JS-framework constraint.
+All routes return HTML unless noted. The UI shell is a single HTML page;
+partial updates use HTMX for the progress stream and diff swap, avoiding
+a full page reload while staying within the no-JS-framework constraint.
 
-> **On HTMX:** HTMX is a ~14 kB library that enables server-driven partial page updates via standard HTML attributes. It is the one JS dependency that provides genuine value here: it allows the agent output stream and diff replacement to work without writing any custom JS. All other interactivity (audio recording, editable transcript) requires a small amount of hand-written JS, described in §8.
+> **On HTMX:** HTMX is a ~14 kB library that enables server-driven
+partial page updates via standard HTML attributes. It is the one JS
+dependency that provides genuine value here: it allows the agent output
+stream and diff replacement to work without writing any custom JS. All
+other interactivity (audio recording, editable transcript) requires a
+small amount of hand-written JS, described in §8.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -202,24 +264,32 @@ All routes return HTML unless noted. The UI shell is a single HTML page; partial
 
 ### 5.1 `GET /`
 
-Returns the full UI shell (see §7). Includes current run status and conversation status reflected in the page. If a run is in progress, the page auto-connects to `/stream`. If a run just completed, it includes the diff inline or a link to `/diff`.
+Returns the full UI shell (see §7). Includes current run status and
+conversation status reflected in the page. If a run is in progress, the
+page auto-connects to `/stream`. If a run just completed, it includes
+the diff inline or a link to `/diff`.
 
 ### 5.2 `POST /audio`
 
-- Content-Type: `multipart/form-data`, field name `audio`, blob format `webm/opus` (recorded by the browser) or `wav`.
-- Server writes the blob to a temp file, calls the configured STT provider, returns:
-  ```json
-  { "transcript": "refactor the parser to handle edge cases" }
-  ```
+- Content-Type: `multipart/form-data`, field name `audio`, blob format
+  `webm/opus` (recorded by the browser) or `wav`.
+- Server writes the blob to a temp file, calls the configured STT
+  provider, returns:
+```json
+{ "transcript": "refactor the parser to handle edge cases" }
+```
 - Errors return `{ "error": "…" }` with an appropriate HTTP status.
-- The transcript is injected by a small JS snippet into the editable `<textarea>` on the page.
+- The transcript is injected by a small JS snippet into the editable
+  `<textarea>` on the page.
 
 ### 5.3 `POST /run`
 
-- Form fields: `prompt` (text string), `conversation_id` (optional override; if absent, uses `ConvState::active_id`).
+- Form fields: `prompt` (text string), `conversation_id` (optional
+  override; if absent, uses `ConvState::active_id`).
 - Server validates: non-empty prompt, no run already in progress.
 - Spawns the agent subprocess asynchronously (see §6).
-- Returns `303 See Other` → `/` so the browser reloads, showing the running state.
+- Returns `303 See Other` → `/` so the browser reloads, showing the
+  running state.
 
 ### 5.4 `GET /stream`
 
@@ -230,26 +300,35 @@ Returns the full UI shell (see §7). Includes current run status and conversatio
   data: [forge] Writing patch to src/parser.rs…\n\n
   data: __DONE__\n\n
   ```
-- The `__DONE__` sentinel causes the HTMX SSE listener to trigger a swap of the diff area.
-- The stream stays open until the run completes or the client disconnects.
+- The `__DONE__` sentinel causes the HTMX SSE listener to trigger a swap
+  of the diff area.
+- The stream stays open until the run completes or the client
+  disconnects.
 
 ### 5.5 `GET /diff` and `GET /diff/range`
 
-- Runs `git diff HEAD~1` (or the specified range) in the configured project directory.
+- Runs `git diff HEAD~1` (or the specified range) in the configured
+  project directory.
 - Pipes the unified diff text through diff2html-cli (see §9).
-- Returns a complete, self-contained HTML fragment ready to be inserted into the page's diff container, or a full HTML page if requested standalone (`?full=1` or `Accept: text/html` without HTMX headers).
+- Returns a complete, self-contained HTML fragment ready to be inserted
+  into the page's diff container, or a full HTML page if requested
+  standalone (`?full=1` or `Accept: text/html` without HTMX headers).
 
 ### 5.6 `POST /conversation/new`
 
-- Optional form field: `label` (short description of the new work, stored in `ConvEntry`).
+- Optional form field: `label` (short description of the new work,
+  stored in `ConvEntry`).
 - Sets `ConvState::active_id = None`.
 - Returns `303 See Other` → `/`.
-- The UI reflects "No active conversation — next run will start a new one."
+- The UI reflects "No active conversation — next run will start a new
+  one."
 
 ### 5.7 `GET /conversation/list`
 
-- Returns an HTML fragment listing all `ConvEntry` items in `ConvState::history`.
-- Each entry shows: ID (truncated), label, started_at, run_count, and a "Resume" button that posts to `/conversation/resume`.
+- Returns an HTML fragment listing all `ConvEntry` items in
+  `ConvState::history`.
+- Each entry shows: ID (truncated), label, started_at, run_count, and a
+  "Resume" button that posts to `/conversation/resume`.
 - Intended as an HTMX swap target, but also usable standalone.
 
 ### 5.8 `POST /conversation/resume`
@@ -264,17 +343,24 @@ Returns the full UI shell (see §7). Includes current run status and conversatio
 - Form fields: `message` (commit subject line, required), `password`.
 - Validates the password (see §14).
 - Rejects if a run is currently in progress (409 Conflict).
-- Runs `git add -A` followed by `git commit` in `project_dir`. The commit message is composed as follows:
+- Runs `git add -A` followed by `git commit` in `project_dir`. The
+  commit message is composed as follows:
   - **Subject line:** the value of `message` as supplied by the user.
-  - **Body:** a blank line followed by a bulleted list of all prompts recorded in `AppState::prompts_since_commit` since the previous commit, oldest first:
+  - **Body:** a blank line followed by a bulleted list of all prompts
+    recorded in `AppState::prompts_since_commit` since the previous commit,
+    oldest first:
     ```
     Prompts since last commit:
     - refactor the parser to handle edge cases
     - add unit tests for the new token types
     ```
-- On success, clears `AppState::prompts_since_commit` and returns `303 See Other` → `/`.
-- On failure (nothing to commit, git error), returns an error page with the git output.
-- `prompts_since_commit` is populated by `POST /run`: every accepted prompt is appended to the list after the run is dispatched. The list is never cleared automatically — only by a successful `POST /commit`.
+- On success, clears `AppState::prompts_since_commit` and returns `303
+  See Other` → `/`.
+- On failure (nothing to commit, git error), returns an error page with
+  the git output.
+- `prompts_since_commit` is populated by `POST /run`: every accepted
+  prompt is appended to the list after the run is dispatched. The list is
+  never cleared automatically — only by a successful `POST /commit`.
 
 ---
 
@@ -318,21 +404,26 @@ POST /run (prompt)
     └─ Return 303 → /
 ```
 
-`RunState` and `ConvState` are both fields on `AppState`, wrapped in `Arc`. Each is protected by its own `Mutex`, held only for reads/writes to the struct, never during subprocess execution.
+`RunState` and `ConvState` are both fields on `AppState`, wrapped in
+`Arc`. Each is protected by its own `Mutex`, held only for reads/writes
+to the struct, never during subprocess execution.
 
 ### 6.1 Concurrency
 
-Only one run is permitted at a time. A second `POST /run` while a run is active returns `409 Conflict` with a human-readable error page.
+Only one run is permitted at a time. A second `POST /run` while a run is
+active returns `409 Conflict` with a human-readable error page.
 
 ### 6.2 Timeouts
 
-A configurable `run_timeout_seconds` (default: 600) kills the subprocess if it exceeds the limit and transitions the run to `Failed(timeout)`.
+A configurable `run_timeout_seconds` (default: 600) kills the subprocess
+if it exceeds the limit and transitions the run to `Failed(timeout)`.
 
 ---
 
 ## 7. UI Structure
 
-The UI is a single HTML page with seven logical sections, rendered top-to-bottom:
+The UI is a single HTML page with seven logical sections, rendered
+top-to-bottom:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -362,39 +453,62 @@ The UI is a single HTML page with seven logical sections, rendered top-to-bottom
 
 ### 7.1 Password Field
 
-A compact `<input type="password" id="password">` field is placed in the page header, persistent across all interactions. A small JS snippet (~15 lines) reads this field's value and injects it as a hidden `password` input into every action form immediately before submission (`submit` event handler). For the JS-driven audio upload (`POST /audio`), the password is appended to the `FormData` object. The value is also saved to and restored from `sessionStorage` so the user need not re-enter it after a page reload. The field is always visible — there is no login page or session cookie.
+A compact `<input type="password" id="password">` field is placed in the
+page header, persistent across all interactions. A small JS snippet (~15
+lines) reads this field's value and injects it as a hidden `password`
+input into every action form immediately before submission (`submit`
+event handler). For the JS-driven audio upload (`POST /audio`), the
+password is appended to the `FormData` object. The value is also saved
+to and restored from `sessionStorage` so the user need not re-enter it
+after a page reload. The field is always visible — there is no login
+page or session cookie.
 
-If the server has no password configured (`password = ""`), the field is hidden and no validation is performed server-side.
+If the server has no password configured (`password = ""`), the field is
+hidden and no validation is performed server-side.
 
 ### 7.2 Conversation Status Bar
 
 A persistent bar beneath the header shows:
-- The active conversation ID (truncated to 8 chars) and its label if set.
+- The active conversation ID (truncated to 8 chars) and its label if
+  set.
 - The run count for the current conversation.
-- A **[ New Conversation ]** button (posts to `/conversation/new`), which opens an optional inline form for a label before confirming.
-- A **[ History ]** toggle that expands a panel rendered via HTMX from `/conversation/list`, showing past conversations with resume buttons.
+- A **[ New Conversation ]** button (posts to `/conversation/new`),
+  which opens an optional inline form for a label before confirming.
+- A **[ History ]** toggle that expands a panel rendered via HTMX from
+  `/conversation/list`, showing past conversations with resume buttons.
 
-When `active_id` is `None`, the bar shows: *"No active conversation — next run will start a new one."*
+When `active_id` is `None`, the bar shows: *"No active conversation —
+next run will start a new one."*
 
 ### 7.3 Manual Commit Section
 
-A compact section below the agent output area allows the user to commit the current working-tree state at any time, independently of an agent run:
+A compact section below the agent output area allows the user to commit
+the current working-tree state at any time, independently of an agent
+run:
 
 - A single-line text input for the commit subject.
-- A **[ Commit ]** button that submits `POST /commit` with the subject and the password.
-- The section shows the number of accumulated prompts that will be appended to the commit body (e.g. *"2 prompts will be appended to message body"*), so the user knows what context will be recorded.
+- A **[ Commit ]** button that submits `POST /commit` with the subject
+  and the password.
+- The section shows the number of accumulated prompts that will be
+  appended to the commit body (e.g. *"2 prompts will be appended to
+  message body"*), so the user knows what context will be recorded.
 - The button is disabled while a run is in progress.
 
 ### 7.4 Responsiveness
 
-- Layout uses CSS Flexbox/Grid with a single-column mobile layout (≤768px) and a two-column option on desktop (prompt+output left, diff right).
-- Font sizes and tap targets are sized for mobile-first (minimum 44px tap target height per WCAG).
+- Layout uses CSS Flexbox/Grid with a single-column mobile layout
+  (≤768px) and a two-column option on desktop (prompt+output left, diff
+  right).
+- Font sizes and tap targets are sized for mobile-first (minimum 44px
+  tap target height per WCAG).
 - The diff area is scrollable independently of the page on mobile.
-- No external CSS frameworks. Custom CSS is inlined into the HTML shell at build time via `include_str!()`.
+- No external CSS frameworks. Custom CSS is inlined into the HTML shell
+  at build time via `include_str!()`.
 
 ### 7.5 Page States
 
-The page reflects the server's `RunState` and `ConvState` at render time:
+The page reflects the server's `RunState` and `ConvState` at render
+time:
 
 | State | UI Behavior |
 |-------|-------------|
@@ -408,11 +522,15 @@ The page reflects the server's `RunState` and `ConvState` at render time:
 
 ## 8. JavaScript Usage
 
-The following are the only JavaScript components. All are hand-written (no frameworks, no build step, no bundler). Total JS budget: ≤ 300 lines.
+The following are the only JavaScript components. All are hand-written
+(no frameworks, no build step, no bundler). Total JS budget: ≤ 300
+lines.
 
 ### 8.1 Audio Capture (`~80 lines`)
 
-The Web Speech API's `SpeechRecognition` interface has inconsistent support and poor quality on mobile. Instead, audio is recorded as a blob and uploaded to the server for high-quality transcription.
+The Web Speech API's `SpeechRecognition` interface has inconsistent
+support and poor quality on mobile. Instead, audio is recorded as a blob
+and uploaded to the server for high-quality transcription.
 
 ```js
 // Pseudocode outline
@@ -437,23 +555,30 @@ recorder.onstop = async () => {
 
 Used for:
 - SSE connection to `/stream`, appending lines to the output `<div>`.
-- Swapping the diff container content when the run completes (triggered by the `__DONE__` SSE event).
-- Loading diff fragments for the diff range selector without full page reload.
+- Swapping the diff container content when the run completes (triggered
+  by the `__DONE__` SSE event).
+- Loading diff fragments for the diff range selector without full page
+  reload.
 - Loading the conversation history panel from `/conversation/list`.
 
-All HTMX behavior is expressed as HTML attributes (`hx-get`, `hx-trigger`, `hx-swap`, `sse-connect`, `sse-swap`) — no JS code required.
+All HTMX behavior is expressed as HTML attributes (`hx-get`,
+`hx-trigger`, `hx-swap`, `sse-connect`, `sse-swap`) — no JS code
+required.
 
 ### 8.3 Auto-scroll (`~10 lines`)
 
-The agent output `<div>` auto-scrolls to the bottom as new lines arrive. A `MutationObserver` on the output container handles this in ~10 lines.
+The agent output `<div>` auto-scrolls to the bottom as new lines arrive.
+A `MutationObserver` on the output container handles this in ~10 lines.
 
 ### 8.4 What Is Not JavaScript
 
 - Page layout and responsiveness — pure CSS.
-- Form submission (run, commit, new conversation, resume conversation) — native HTML `<form method="POST">`.
+- Form submission (run, commit, new conversation, resume conversation)
+  — native HTML `<form method="POST">`.
 - Diff rendering — done entirely server-side.
 - Syntax highlighting — embedded in the diff2html-generated HTML.
-- State management — reflected in server-rendered HTML on each full page load.
+- State management — reflected in server-rendered HTML on each full
+  page load.
 
 ---
 
@@ -461,9 +586,17 @@ The agent output `<div>` auto-scrolls to the bottom as new lines arrive. A `Muta
 
 ### 9.1 Approach
 
-The server invokes `git diff` as a subprocess and pipes the unified diff text through `diff2html-cli`. This is an explicit design choice: diff2html-cli produces GitHub-quality output with correct syntax highlighting, word-level matching, sticky file headers, and a collapsible file list. The Node.js runtime dependency is accepted; `diff2html-cli` is installed once (`npm install -g diff2html-cli`) alongside `forge` and `git`.
+The server invokes `git diff` as a subprocess and pipes the unified
+diff text through `diff2html-cli`. This is an explicit design
+choice: diff2html-cli produces GitHub-quality output with correct
+syntax highlighting, word-level matching, sticky file headers, and a
+collapsible file list. The Node.js runtime dependency is accepted;
+`diff2html-cli` is installed once (`npm install -g diff2html-cli`)
+alongside `forge` and `git`.
 
-A future migration to a pure Rust renderer (using the `similar` crate) remains possible — the diff rendering logic is isolated in `src/diff.rs` behind a trait — but is not a priority.
+A future migration to a pure Rust renderer (using the `similar`
+crate) remains possible — the diff rendering logic is isolated in
+`src/diff.rs` behind a trait — but is not a priority.
 
 ### 9.2 Invocation
 
@@ -482,15 +615,24 @@ For multi-commit diffs:
 git diff <from_sha>..<to_sha> | diff2html …
 ```
 
-The resulting HTML fragment is wrapped in the server's page template and served. The server passes `--no-header` so the output is a fragment suitable for HTMX swapping; a standalone full-page wrapper is added server-side when `?full=1` is requested.
+The resulting HTML fragment is wrapped in the server's page template
+and served. The server passes `--no-header` so the output is a fragment
+suitable for HTMX swapping; a standalone full-page wrapper is added
+server-side when `?full=1` is requested.
 
 ### 9.3 Standalone Diff Page
 
-`GET /diff` returns a complete standalone HTML page when accessed directly (detected via `?full=1` or absence of the `HX-Request` header). This makes it easy to bookmark a specific commit diff or share it within a local network.
+`GET /diff` returns a complete standalone HTML page when accessed
+directly (detected via `?full=1` or absence of the `HX-Request` header).
+This makes it easy to bookmark a specific commit diff or share it within
+a local network.
 
 ### 9.4 Diff History
 
-The server maintains an in-memory list of recent commit SHAs (up to a configurable limit, default 20). The UI renders these as buttons in the diff header, allowing the user to quickly load any recent diff or a cumulative range.
+The server maintains an in-memory list of recent commit SHAs (up to a
+configurable limit, default 20). The UI renders these as buttons in the
+diff header, allowing the user to quickly load any recent diff or a
+cumulative range.
 
 ---
 
@@ -498,7 +640,10 @@ The server maintains an in-memory list of recent commit SHAs (up to a configurab
 
 ### 10.1 Provider Strategy
 
-The browser records audio as `webm/opus` and POSTs it to `/audio`. The server transcribes it locally via a persistent `whisper-server` process. A remote API fallback is supported for convenience but is not the recommended path.
+The browser records audio as `webm/opus` and POSTs it to `/audio`.
+The server transcribes it locally via a persistent `whisper-server`
+process. A remote API fallback is supported for convenience but is not
+the recommended path.
 
 | Provider | Quality | Latency (short clip) | Cost | Notes |
 |----------|---------|----------------------|------|-------|
@@ -516,11 +661,16 @@ pub trait SttProvider: Send + Sync {
 }
 ```
 
-Concrete implementations: `WhisperServerProvider` (local HTTP), `WhisperApiProvider` (OpenAI), `DeepgramProvider`.
+Concrete implementations: `WhisperServerProvider` (local HTTP),
+`WhisperApiProvider` (OpenAI), `DeepgramProvider`.
 
 ### 10.2 Local whisper-server Setup
 
-`whisper.cpp` ships a built-in HTTP server (`whisper-server`) that loads the model once into GPU VRAM and serves subsequent requests with near-zero overhead. This is the correct integration pattern — **not** spawning `whisper-cli` as a subprocess per request, which pays the full model-load penalty (~2–4s) on every invocation.
+`whisper.cpp` ships a built-in HTTP server (`whisper-server`) that
+loads the model once into GPU VRAM and serves subsequent requests with
+near-zero overhead. This is the correct integration pattern — **not**
+spawning `whisper-cli` as a subprocess per request, which pays the full
+model-load penalty (~2–4s) on every invocation.
 
 **Build with CUDA support:**
 
@@ -542,16 +692,25 @@ bash ./models/download-ggml-model.sh large-v3-turbo
 ./build/bin/whisper-server   --model models/ggml-large-v3-turbo.bin   --host 127.0.0.1   --port 8090   --inference-path /v1/audio/transcriptions   --threads 4   --processors 1
 ```
 
-The `--inference-path /v1/audio/transcriptions` flag makes the endpoint OpenAI API-compatible, so the Rust client code is identical regardless of whether it targets the local server or OpenAI's cloud.
+The `--inference-path /v1/audio/transcriptions` flag makes the endpoint
+OpenAI API-compatible, so the Rust client code is identical regardless
+of whether it targets the local server or OpenAI's cloud.
 
 **Model and hardware fit:**
 
-- `large-v3-turbo` uses ~3 GB VRAM at FP16, well within the 16 GB available. The remaining VRAM is free for other processes.
-- For short dictation clips (5–30 seconds), warm inference on a mid-range NVIDIA GPU takes **~150–500 ms** — fast enough to feel instant.
-- `large-v3-turbo` has 4 decoder layers instead of 32 (vs. full large-v3), giving ~48% faster decoding at minimal accuracy cost — the right choice here since speed matters and clips are short and clean.
-- If maximum accuracy is preferred over speed, `large-v3` (~3 GB VRAM, same fit) can be substituted with no other changes.
+- `large-v3-turbo` uses ~3 GB VRAM at FP16, well within the 16 GB
+  available. The remaining VRAM is free for other processes.
+- For short dictation clips (5–30 seconds), warm inference on a
+  mid-range NVIDIA GPU takes **~150–500 ms** — fast enough to feel
+  instant.
+- `large-v3-turbo` has 4 decoder layers instead of 32 (vs. full
+  large-v3), giving ~48% faster decoding at minimal accuracy cost — the
+  right choice here since speed matters and clips are short and clean.
+- If maximum accuracy is preferred over speed, `large-v3` (~3 GB VRAM,
+  same fit) can be substituted with no other changes.
 
-**Run as a systemd service** so it starts automatically and is always warm:
+**Run as a systemd service** so it starts automatically and is always
+warm:
 
 ```ini
 [Unit]
@@ -587,28 +746,36 @@ api_key = ""   # override with AGENT2WEB_STT_DEEPGRAM_KEY
 
 ### 10.4 Transcript Review
 
-After the audio upload returns the transcript, it is placed into a `<textarea>`. The user can:
-- Read it through and correct any mis-transcriptions (common for technical terms, identifiers, file names).
+After the audio upload returns the transcript, it is placed into a
+`<textarea>`. The user can:
+- Read it through and correct any mis-transcriptions (common for
+  technical terms, identifiers, file names).
 - Edit freely — the textarea is a standard HTML editable field.
 - Submit when satisfied, or clear and re-record.
 
-The submit button is disabled while audio is uploading or a run is in progress.
+The submit button is disabled while audio is uploading or a run is in
+progress.
 
 ### 10.5 Audio Format
 
-The browser records `webm/opus`. `whisper-server` expects 16 kHz mono WAV (16-bit PCM). The Rust handler converts the upload using `ffmpeg` before forwarding:
+The browser records `webm/opus`. `whisper-server` expects 16 kHz mono
+WAV (16-bit PCM). The Rust handler converts the upload using `ffmpeg`
+before forwarding:
 
 ```sh
 ffmpeg -i input.webm -ar 16000 -ac 1 -f wav output.wav
 ```
 
-`ffmpeg` is already a common dependency on Linux servers; it is added to the list of external runtime dependencies.
+`ffmpeg` is already a common dependency on Linux servers; it is added to
+the list of external runtime dependencies.
 
 ---
 
 ## 11. Configuration
 
-Configuration is read from a TOML file (default: `./agent2web.toml`) with environment variable overrides for secrets. No CLI argument parsing beyond `--config <path>`.
+Configuration is read from a TOML file (default: `./agent2web.toml`)
+with environment variable overrides for secrets. No CLI argument parsing
+beyond `--config <path>`.
 
 ```toml
 [server]
@@ -680,7 +847,9 @@ agent2web/
 └── agent2web.toml.example
 ```
 
-Static assets (`style.css`, `app.js`) are embedded into the binary at compile time using `include_str!()`, so the deployed artifact is a single self-contained binary.
+Static assets (`style.css`, `app.js`) are embedded into the binary at
+compile time using `include_str!()`, so the deployed artifact is a
+single self-contained binary.
 
 ---
 
@@ -712,27 +881,54 @@ External runtime dependencies:
 
 ## 14. Security Considerations
 
-`agent2web` executes shell commands with user-supplied prompt text. The following mitigations apply:
+`agent2web` executes shell commands with user-supplied prompt text. The
+following mitigations apply:
 
-- The prompt is passed to `forge` as a single argument, not interpolated into a shell string. Subprocesses are spawned via `tokio::process::Command` with explicit argument lists, never via `sh -c`.
-- Conversation IDs are validated against `ConvState::history` before being passed to `forge`; arbitrary strings are rejected.
-- The `project_dir` is configured at startup and is not user-controllable at runtime.
-- Audio uploads are size-limited (configurable, default 25 MB) to prevent local disk exhaustion.
-- SSE connections are limited to one per run; a new connection drops the previous one.
+- The prompt is passed to `forge` as a single argument, not
+  interpolated into a shell string. Subprocesses are spawned via
+  `tokio::process::Command` with explicit argument lists, never via `sh
+  -c`.
+- Conversation IDs are validated against `ConvState::history` before
+  being passed to `forge`; arbitrary strings are rejected.
+- The `project_dir` is configured at startup and is not
+  user-controllable at runtime.
+- Audio uploads are size-limited (configurable, default 25 MB) to
+  prevent local disk exhaustion.
+- SSE connections are limited to one per run; a new connection drops the
+  previous one.
 
 ### 14.1 Password Authentication
 
-All endpoints that produce a server-side action (`POST /run`, `POST /audio`, `POST /commit`, `POST /conversation/new`, `POST /conversation/resume`) require a `password` form field. The server compares it to the value of `server.password` in the configuration (or the `AGENT2WEB_PASSWORD` environment variable). A mismatch returns `403 Forbidden`. Read-only endpoints (`GET /`, `GET /stream`, `GET /diff`, `GET /conversation/list`, `GET /health`) are not password-protected.
+All endpoints that produce a server-side action (`POST /run`,
+`POST /audio`, `POST /commit`, `POST /conversation/new`, `POST
+/conversation/resume`) require a `password` form field. The server
+compares it to the value of `server.password` in the configuration (or
+the `AGENT2WEB_PASSWORD` environment variable). A mismatch returns `403
+Forbidden`. Read-only endpoints (`GET /`, `GET /stream`, `GET /diff`,
+`GET /conversation/list`, `GET /health`) are not password-protected.
 
-When `server.password` is empty (the default), authentication is disabled entirely — no password field is required or checked.
+When `server.password` is empty (the default), authentication is
+disabled entirely — no password field is required or checked.
 
-The password is intentionally simple (no hashing, no sessions, no tokens). It is a shared secret transmitted over the encrypted connection and is sufficient for a single-user self-hosted deployment. The UI stores the value in `sessionStorage` and injects it automatically into every form.
+The password is intentionally simple (no hashing, no sessions, no
+tokens). It is a shared secret transmitted over the encrypted connection
+and is sufficient for a single-user self-hosted deployment. The UI
+stores the value in `sessionStorage` and injects it automatically into
+every form.
 
 ### 14.2 TLS
 
-When `server.tls.enabled = true`, the server binds a TLS listener using `axum-server` with `rustls`. The certificate and private key are read from the paths given by `server.tls.cert` and `server.tls.key`. A self-signed certificate is sufficient for personal use (see §17 for the generation script). Combined with the password, this provides reasonable security for a personal tool exposed over a home network or VPN without requiring a reverse proxy.
+When `server.tls.enabled = true`, the server binds a TLS listener
+using `axum-server` with `rustls`. The certificate and private key are
+read from the paths given by `server.tls.cert` and `server.tls.key`. A
+self-signed certificate is sufficient for personal use (see §17 for the
+generation script). Combined with the password, this provides reasonable
+security for a personal tool exposed over a home network or VPN without
+requiring a reverse proxy.
 
-When TLS is disabled the server binds a plain HTTP listener, which is appropriate when sitting behind a TLS-terminating reverse proxy such as nginx or Caddy.
+When TLS is disabled the server binds a plain HTTP listener, which is
+appropriate when sitting behind a TLS-terminating reverse proxy such as
+nginx or Caddy.
 
 ---
 
@@ -753,21 +949,42 @@ When TLS is disabled the server binds a plain HTTP listener, which is appropriat
 
 ## 16. Open Questions
 
-1. **ForgeCode conversation invocation — resolved:** Research into the ZSH plugin source and official docs confirms the correct pattern. `forge -p "<prompt>"` automatically continues the most recently active conversation on disk; no `--conversation-id` flag is needed or exists. The only special case is starting a new conversation: `forge conversation new` (which prints the new ID to stdout) must be called first, so the server can record the ID for its own bookkeeping. `forge conversation resume <id>` opens the interactive TUI and is not usable non-interactively. The adapter in `src/agent.rs` is therefore simple and well-defined.
+1. **ForgeCode conversation invocation — resolved:** Research into
+    the ZSH plugin source and official docs confirms the correct pattern.
+    `forge -p "<prompt>"` automatically continues the most recently
+    active conversation on disk; no `--conversation-id` flag is needed or
+    exists. The only special case is starting a new conversation: `forge
+    conversation new` (which prints the new ID to stdout) must be called
+    first, so the server can record the ID for its own bookkeeping. `forge
+    conversation resume <id>` opens the interactive TUI and is not usable
+    non-interactively. The adapter in `src/agent.rs` is therefore simple and
+    well-defined.
 
-2. **Auto-push:** Disabled by default. When enabled, `git push` runs after commit. Should there be a confirmation step in the UI before push, or is commit-then-push always the right behaviour?
+2. **Auto-push:** Disabled by default. When enabled, `git push` runs
+    after commit. Should there be a confirmation step in the UI before push,
+    or is commit-then-push always the right behaviour?
 
-3. **Multi-project support:** Currently one `project_dir` per server instance. Running multiple instances on different ports is the simplest solution. A project switcher in the UI is a possible future addition.
+3. **Multi-project support:** Currently one `project_dir` per server
+    instance. Running multiple instances on different ports is the simplest
+    solution. A project switcher in the UI is a possible future addition.
 
-4. **Conversation persistence across server restart:** Currently `ConvState` is in-memory only. A simple on-disk JSON file written after each state change would survive restarts with minimal added complexity, and would allow the user to resume conversations even after rebooting the server.
+4. **Conversation persistence across server restart:** Currently
+    `ConvState` is in-memory only. A simple on-disk JSON file written after
+    each state change would survive restarts with minimal added complexity,
+    and would allow the user to resume conversations even after rebooting
+    the server.
 
-5. **Streaming diff updates:** Currently the diff is loaded once after the run completes. For very long-running agents that commit incrementally, streaming intermediate diffs could be valuable.
+5. **Streaming diff updates:** Currently the diff is loaded once
+    after the run completes. For very long-running agents that commit
+    incrementally, streaming intermediate diffs could be valuable.
 
 ---
 
 ## 17. TLS Setup
 
-When `server.tls.enabled = true`, a certificate and private key must be present before starting the server. The `tls/generate.sh` script creates a 10-year self-signed RSA-4096 certificate suitable for personal use:
+When `server.tls.enabled = true`, a certificate and private key must be
+present before starting the server. The `tls/generate.sh` script creates
+a 10-year self-signed RSA-4096 certificate suitable for personal use:
 
 ```sh
 #!/usr/bin/env bash
@@ -804,6 +1021,11 @@ Run it once from the repository root:
 bash tls/generate.sh
 ```
 
-Both `tls/cert.pem` and `tls/key.pem` should be listed in `.gitignore`. The certificate is self-signed: browsers will show a certificate warning on first access. Accept it once (or install the cert as a trusted CA on your devices) and subsequent visits will connect silently.
+Both `tls/cert.pem` and `tls/key.pem` should be listed in `.gitignore`.
+The certificate is self-signed: browsers will show a certificate warning
+on first access. Accept it once (or install the cert as a trusted CA on
+your devices) and subsequent visits will connect silently.
 
-> **Note:** `tls/generate.sh` is included in the repository. `tls/cert.pem` and `tls/key.pem` are generated locally and must never be committed.
+> **Note:** `tls/generate.sh` is included in the repository.
+`tls/cert.pem` and `tls/key.pem` are generated locally and must never be
+committed.
