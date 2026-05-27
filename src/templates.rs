@@ -142,13 +142,12 @@ pub fn render_index(
         <h2>Diff</h2>
       </div>
       <div class="card-body">
+        <p class="commit-hint" style="margin-bottom:0.75rem">
+          Opens in a new page — use &#x2190; Back to return here.
+        </p>
         <div class="diff-controls">
           <a href="/diff" class="btn btn-secondary btn-sm">HEAD~1</a>
           <a href="/diff/range?from=HEAD~3&amp;to=HEAD" class="btn btn-secondary btn-sm">HEAD~3..HEAD</a>
-        </div>
-        <div class="diff-container" id="diff-container"
-             hx-get="/diff" hx-trigger="load" hx-swap="innerHTML">
-          <div class="diff-placeholder">Diff will appear here after a run completes.</div>
         </div>
       </div>
     </div>
