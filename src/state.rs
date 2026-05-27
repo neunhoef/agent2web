@@ -1,7 +1,14 @@
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
+use tokio::sync::broadcast;
+
 use crate::config::Config;
+
+/// Capacity of the SSE broadcast ring-buffer (messages).
+/// Subscribers that fall more than this many messages behind will receive a
+/// `RecvError::Lagged` error (which the SSE handler maps to a dropped event).
+const SSE_CHANNEL_CAPACITY: usize = 1024;
 
 // ── Run state ──────────────────────────────────────────────────────────────
 
@@ -122,15 +129,21 @@ pub struct AppState {
     pub prompts_since_commit: Mutex<Vec<String>>,
     /// Application configuration (read-only after startup).
     pub config: Config,
+    /// Broadcast channel for SSE live output. The agent task sends one message
+    /// per output line, plus `"__DONE__"` when the run ends. SSE subscribers
+    /// forward messages to browser clients.
+    pub sse_tx: broadcast::Sender<String>,
 }
 
 impl AppState {
     pub fn new(config: Config) -> Arc<Self> {
+        let (sse_tx, _) = broadcast::channel(SSE_CHANNEL_CAPACITY);
         Arc::new(Self {
             run: Mutex::new(RunState::default()),
             conv: Mutex::new(ConvState::default()),
             prompts_since_commit: Mutex::new(Vec::new()),
             config,
+            sse_tx,
         })
     }
 }

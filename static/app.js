@@ -1,11 +1,11 @@
 /* agent2web — client-side JavaScript
  *
- * Three functional areas:
+ * Four functional areas:
  *   1. Password field: persist in sessionStorage, inject into every form.
  *   2. Audio capture: MediaRecorder → POST /audio → populate transcript textarea.
  *   3. Auto-scroll: MutationObserver on the agent output div.
+ *   4. SSE live output: EventSource on /stream when a run is in progress.
  *
- * HTMX handles SSE streaming and HTMX-driven partial swaps via HTML attributes.
  * Total budget: ≤ 300 lines.
  */
 
@@ -141,4 +141,39 @@
   });
 
   observer.observe(outputBox, { childList: true, subtree: true, characterData: true });
+})();
+
+// ── 4. SSE live output ───────────────────────────────────────────────────────
+
+(function () {
+  const outputBox = document.getElementById('agent-output');
+  if (!outputBox || !outputBox.dataset.sseRunning) return;
+
+  const source = new EventSource('/stream');
+
+  source.onmessage = function (e) {
+    const data = e.data;
+    if (data === '__DONE__') {
+      source.close();
+      // Reload to show final run status and diff.
+      window.location.reload();
+      return;
+    }
+    // Remove the "empty" placeholder if present.
+    const placeholder = outputBox.querySelector('.output-empty');
+    if (placeholder) placeholder.remove();
+
+    // Append a new output line.
+    const isStderr = data.startsWith('[stderr] ');
+    const span = document.createElement('span');
+    span.className = 'output-line' + (isStderr ? ' stderr' : '');
+    span.textContent = data;
+    outputBox.appendChild(span);
+    outputBox.appendChild(document.createTextNode('\n'));
+  };
+
+  source.onerror = function () {
+    // Connection lost — close and let the page reload handle it.
+    source.close();
+  };
 })();

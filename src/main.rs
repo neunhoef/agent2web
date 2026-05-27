@@ -3,6 +3,7 @@
 // dead-code warnings for these intentional stubs.
 #![allow(dead_code)]
 
+mod agent;
 mod config;
 mod diff;
 mod handlers;

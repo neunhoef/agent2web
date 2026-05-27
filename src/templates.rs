@@ -247,15 +247,37 @@ fn render_run_status_badge(status: &RunStatus) -> String {
 // ── Agent output section ───────────────────────────────────────────────────
 
 fn render_output_section(run: &RunState) -> String {
+    let is_running = run.status.is_running();
+
     let output_inner = if run.output_buf.is_empty() {
-        r#"<span class="output-empty">Agent output will stream here during a run.</span>"#
-            .to_string()
+        if is_running {
+            // Empty string: the SSE JS will populate the box with incoming lines.
+            String::new()
+        } else {
+            r#"<span class="output-empty">Agent output will stream here during a run.</span>"#
+                .to_string()
+        }
     } else {
         run.output_buf
             .iter()
-            .map(|line| format!(r#"<span class="output-line">{}</span>"#, html_escape(line)))
+            .map(|line| {
+                let is_stderr = line.starts_with("[stderr] ");
+                let class = if is_stderr {
+                    "output-line stderr"
+                } else {
+                    "output-line"
+                };
+                format!(r#"<span class="{class}">{}</span>"#, html_escape(line))
+            })
             .collect::<Vec<_>>()
             .join("\n")
+    };
+
+    // When Running, tell the JS to attach an SSE listener to this element.
+    let sse_attr = if is_running {
+        r#" data-sse-running="true""#
+    } else {
+        ""
     };
 
     // Show a "Failed" alert if the last run failed.
@@ -291,7 +313,7 @@ fn render_output_section(run: &RunState) -> String {
       </div>
       <div class="card-body">
         {failure_alert}
-        <div class="output-box" id="agent-output">{output_inner}</div>
+        <div class="output-box" id="agent-output"{sse_attr}>{output_inner}</div>
       </div>
     </div>"#,
     )
