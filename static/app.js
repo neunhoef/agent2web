@@ -1,0 +1,144 @@
+/* agent2web — client-side JavaScript
+ *
+ * Three functional areas:
+ *   1. Password field: persist in sessionStorage, inject into every form.
+ *   2. Audio capture: MediaRecorder → POST /audio → populate transcript textarea.
+ *   3. Auto-scroll: MutationObserver on the agent output div.
+ *
+ * HTMX handles SSE streaming and HTMX-driven partial swaps via HTML attributes.
+ * Total budget: ≤ 300 lines.
+ */
+
+'use strict';
+
+// ── 1. Password persistence & injection ─────────────────────────────────────
+
+(function () {
+  const SESSION_KEY = 'agent2web_password';
+  const pwdField = document.getElementById('password');
+  if (!pwdField) return;
+
+  // Restore saved value
+  const saved = sessionStorage.getItem(SESSION_KEY);
+  if (saved) pwdField.value = saved;
+
+  // Persist on change
+  pwdField.addEventListener('input', () => {
+    sessionStorage.setItem(SESSION_KEY, pwdField.value);
+  });
+
+  // Inject into every form before submission
+  document.addEventListener('submit', function (e) {
+    const form = e.target;
+    if (!form || form.tagName !== 'FORM') return;
+    // Remove any previously injected field to avoid duplicates
+    const existing = form.querySelector('input[name="password"][data-injected]');
+    if (existing) existing.remove();
+    // Inject current password
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.name = 'password';
+    hidden.value = pwdField.value;
+    hidden.dataset.injected = '1';
+    form.appendChild(hidden);
+  });
+})();
+
+// ── 2. Audio capture ─────────────────────────────────────────────────────────
+
+(function () {
+  const recordBtn = document.getElementById('btn-record');
+  const stopBtn = document.getElementById('btn-stop');
+  const promptArea = document.getElementById('prompt');
+  const recordStatus = document.getElementById('record-status');
+
+  if (!recordBtn || !stopBtn || !promptArea) return;
+
+  let mediaRecorder = null;
+  let chunks = [];
+  let stream = null;
+
+  function setStatus(msg, isError) {
+    if (!recordStatus) return;
+    recordStatus.textContent = msg;
+    recordStatus.style.color = isError ? 'var(--danger)' : 'var(--text-muted)';
+  }
+
+  recordBtn.addEventListener('click', async () => {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunks = [];
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+      mediaRecorder.onstop = async () => {
+        // Stop all tracks to release microphone indicator
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+
+        const blob = new Blob(chunks, { type: mimeType });
+        const form = new FormData();
+        form.append('audio', blob, 'recording.webm');
+
+        // Inject password
+        const pwdField = document.getElementById('password');
+        if (pwdField) form.append('password', pwdField.value);
+
+        setStatus('Transcribing…');
+        recordBtn.disabled = false;
+        stopBtn.disabled = true;
+
+        try {
+          const res = await fetch('/audio', { method: 'POST', body: form });
+          const data = await res.json();
+          if (data.transcript) {
+            promptArea.value = data.transcript;
+            setStatus('Transcript ready — review and edit before sending.');
+          } else if (data.error) {
+            setStatus('Error: ' + data.error, true);
+          }
+        } catch (err) {
+          setStatus('Upload failed: ' + err.message, true);
+        }
+
+        document.body.classList.remove('recording');
+      };
+
+      mediaRecorder.start(500); // collect chunks every 500 ms
+      document.body.classList.add('recording');
+      recordBtn.disabled = true;
+      stopBtn.disabled = false;
+      setStatus('Recording…');
+    } catch (err) {
+      setStatus('Microphone error: ' + err.message, true);
+    }
+  });
+
+  stopBtn.addEventListener('click', () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      setStatus('Processing…');
+    }
+  });
+
+  // Initialise button state
+  stopBtn.disabled = true;
+})();
+
+// ── 3. Auto-scroll agent output ──────────────────────────────────────────────
+
+(function () {
+  const outputBox = document.getElementById('agent-output');
+  if (!outputBox) return;
+
+  const observer = new MutationObserver(() => {
+    outputBox.scrollTop = outputBox.scrollHeight;
+  });
+
+  observer.observe(outputBox, { childList: true, subtree: true, characterData: true });
+})();

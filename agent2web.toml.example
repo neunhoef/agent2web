@@ -1,0 +1,61 @@
+# agent2web.toml — example configuration
+# Copy this file to agent2web.toml and adjust for your environment.
+
+[server]
+# Socket address to bind.
+bind         = "0.0.0.0:8080"
+
+# Absolute path to the git repository ForgeCode operates on.
+project_dir  = "/home/user/myproject"
+
+# Maximum seconds a forge run may run before being killed.
+run_timeout  = 600
+
+# Shared password for all mutating endpoints (POST /run, POST /audio, etc.).
+# Leave empty to disable authentication entirely.
+# Can also be set via the AGENT2WEB_PASSWORD environment variable.
+password     = ""
+
+# Optional TLS — enable when not behind a TLS-terminating reverse proxy.
+# Run tls/generate.sh once to create a self-signed certificate.
+[server.tls]
+enabled = false
+cert    = "tls/cert.pem"
+key     = "tls/key.pem"
+
+[forge]
+# Path or name of the forge binary on $PATH.
+binary       = "forge"
+
+# Command used to create a commit after a successful agent run.
+# "forge commit" uses ForgeCode's AI-generated commit message.
+# Alternative: "git commit -m 'agent run'"
+commit_cmd   = "forge commit"
+
+# If true, run git push after every successful commit.
+auto_push    = false
+
+[stt]
+# STT provider to use: "whisper_server" (local), "openai", or "deepgram".
+provider     = "whisper_server"
+
+# API key for cloud providers. Can also be set via AGENT2WEB_STT_API_KEY.
+api_key      = ""
+
+[stt.whisper_server]
+# URL of the running whisper-server HTTP endpoint.
+# Build whisper.cpp with -DGGML_CUDA=1 and run:
+#   ./build/bin/whisper-server --model models/ggml-large-v3-turbo.bin \
+#     --host 127.0.0.1 --port 8090 \
+#     --inference-path /v1/audio/transcriptions
+url = "http://127.0.0.1:8090/v1/audio/transcriptions"
+
+[stt.openai]
+model = "whisper-1"
+
+[diff]
+# Number of recent commit SHAs to keep in memory for the diff history UI.
+max_history   = 20
+
+# Lines of context around each change in diff output.
+context_lines = 5

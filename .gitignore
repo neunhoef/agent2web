@@ -1,1 +1,9 @@
 /target
+
+# TLS certificates (generated locally by tls/generate.sh)
+tls/cert.pem
+tls/key.pem
+
+# Local config (copy from agent2web.toml.example)
+agent2web.toml
+
