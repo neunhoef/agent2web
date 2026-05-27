@@ -1,6 +1,6 @@
 # agent2web — Design Document
 
-**Version:** 0.4  
+**Version:** 0.5  
 **Status:** Draft
 
 ---
@@ -67,6 +67,8 @@ Mobile Browser
 │  │        AppState (Arc)         │  │
 │  │  run: Mutex<RunState>         │  │
 │  │  conv: Mutex<ConvState>       │  │  ← active conversation ID + history
+│  │  prompts_since_commit:        │  │  ← cleared on each git commit
+│  │    Mutex<Vec<String>>         │  │
 │  └───────────────────────────────┘  │
 │              │                      │
 │   ┌──────────┴──────────┐           │
@@ -195,6 +197,7 @@ All routes return HTML unless noted. The UI shell is a single HTML page; partial
 | `POST` | `/conversation/new` | Reset active conversation; next run starts fresh |
 | `GET` | `/conversation/list` | HTML fragment listing conversation history (HTMX swap target) |
 | `POST` | `/conversation/resume` | Resume a specific past conversation by ID (form field: `id`) |
+| `POST` | `/commit` | Commit working-tree changes with a user-supplied message |
 | `GET` | `/health` | `200 OK` plain text — for uptime monitoring |
 
 ### 5.1 `GET /`
@@ -256,6 +259,23 @@ Returns the full UI shell (see §7). Includes current run status and conversatio
 - Sets `ConvState::active_id = Some(id)`.
 - Returns `303 See Other` → `/`.
 
+### 5.9 `POST /commit`
+
+- Form fields: `message` (commit subject line, required), `password`.
+- Validates the password (see §14).
+- Rejects if a run is currently in progress (409 Conflict).
+- Runs `git add -A` followed by `git commit` in `project_dir`. The commit message is composed as follows:
+  - **Subject line:** the value of `message` as supplied by the user.
+  - **Body:** a blank line followed by a bulleted list of all prompts recorded in `AppState::prompts_since_commit` since the previous commit, oldest first:
+    ```
+    Prompts since last commit:
+    - refactor the parser to handle edge cases
+    - add unit tests for the new token types
+    ```
+- On success, clears `AppState::prompts_since_commit` and returns `303 See Other` → `/`.
+- On failure (nothing to commit, git error), returns an error page with the git output.
+- `prompts_since_commit` is populated by `POST /run`: every accepted prompt is appended to the list after the run is dispatched. The list is never cleared automatically — only by a successful `POST /commit`.
+
 ---
 
 ## 6. Agent Run Lifecycle
@@ -312,14 +332,14 @@ A configurable `run_timeout_seconds` (default: 600) kills the subprocess if it e
 
 ## 7. UI Structure
 
-The UI is a single HTML page with five logical sections, rendered top-to-bottom:
+The UI is a single HTML page with seven logical sections, rendered top-to-bottom:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  agent2web   [project: my-proj]                 │  ← header
+│  agent2web   [project: my-proj]   Password: [__]│  ← header + password field
 │  Conversation: abc123 (3 runs)  [New Conv ▶]    │  ← conversation status bar
 ├─────────────────────────────────────────────────┤
-│  [ 🎙 Record ]  [ Stop ]                        │  ← voice capture controls
+│  [ Record ]  [ Stop ]                           │  ← voice capture controls
 │  ┌─────────────────────────────────────────┐    │
 │  │ Editable transcript textarea            │    │
 │  └─────────────────────────────────────────┘    │
@@ -331,6 +351,8 @@ The UI is a single HTML page with five logical sections, rendered top-to-bottom:
 │  │ [forge] Writing src/parser.rs…          │    │
 │  └─────────────────────────────────────────┘    │
 ├─────────────────────────────────────────────────┤
+│  Commit  [Subject line input________]  [Commit] │  ← manual commit section
+├─────────────────────────────────────────────────┤
 │  Diff  [HEAD~1]  [HEAD~3..HEAD]  [···]          │  ← diff controls
 │  ┌─────────────────────────────────────────┐    │
 │  │ <diff2html rendered output>             │    │
@@ -338,7 +360,13 @@ The UI is a single HTML page with five logical sections, rendered top-to-bottom:
 └─────────────────────────────────────────────────┘
 ```
 
-### 7.1 Conversation Status Bar
+### 7.1 Password Field
+
+A compact `<input type="password" id="password">` field is placed in the page header, persistent across all interactions. A small JS snippet (~15 lines) reads this field's value and injects it as a hidden `password` input into every action form immediately before submission (`submit` event handler). For the JS-driven audio upload (`POST /audio`), the password is appended to the `FormData` object. The value is also saved to and restored from `sessionStorage` so the user need not re-enter it after a page reload. The field is always visible — there is no login page or session cookie.
+
+If the server has no password configured (`password = ""`), the field is hidden and no validation is performed server-side.
+
+### 7.2 Conversation Status Bar
 
 A persistent bar beneath the header shows:
 - The active conversation ID (truncated to 8 chars) and its label if set.
@@ -348,14 +376,23 @@ A persistent bar beneath the header shows:
 
 When `active_id` is `None`, the bar shows: *"No active conversation — next run will start a new one."*
 
-### 7.2 Responsiveness
+### 7.3 Manual Commit Section
+
+A compact section below the agent output area allows the user to commit the current working-tree state at any time, independently of an agent run:
+
+- A single-line text input for the commit subject.
+- A **[ Commit ]** button that submits `POST /commit` with the subject and the password.
+- The section shows the number of accumulated prompts that will be appended to the commit body (e.g. *"2 prompts will be appended to message body"*), so the user knows what context will be recorded.
+- The button is disabled while a run is in progress.
+
+### 7.4 Responsiveness
 
 - Layout uses CSS Flexbox/Grid with a single-column mobile layout (≤768px) and a two-column option on desktop (prompt+output left, diff right).
 - Font sizes and tap targets are sized for mobile-first (minimum 44px tap target height per WCAG).
 - The diff area is scrollable independently of the page on mobile.
 - No external CSS frameworks. Custom CSS is inlined into the HTML shell at build time via `include_str!()`.
 
-### 7.3 Page States
+### 7.5 Page States
 
 The page reflects the server's `RunState` and `ConvState` at render time:
 
@@ -413,7 +450,7 @@ The agent output `<div>` auto-scrolls to the bottom as new lines arrive. A `Muta
 ### 8.4 What Is Not JavaScript
 
 - Page layout and responsiveness — pure CSS.
-- Form submission (run, new conversation, resume conversation) — native HTML `<form method="POST">`.
+- Form submission (run, commit, new conversation, resume conversation) — native HTML `<form method="POST">`.
 - Diff rendering — done entirely server-side.
 - Syntax highlighting — embedded in the diff2html-generated HTML.
 - State management — reflected in server-rendered HTML on each full page load.
@@ -578,6 +615,14 @@ Configuration is read from a TOML file (default: `./agent2web.toml`) with enviro
 bind         = "0.0.0.0:8080"
 project_dir  = "/home/user/myproject"   # the git repo ForgeCode operates on
 run_timeout  = 600                      # seconds
+password     = ""                       # shared password for all action endpoints;
+                                        # leave empty to disable auth entirely.
+                                        # Override with AGENT2WEB_PASSWORD env var.
+
+[server.tls]
+enabled      = false
+cert         = "tls/cert.pem"           # path to PEM certificate (absolute or
+key          = "tls/key.pem"            # relative to the config file location)
 
 [forge]
 binary       = "forge"                  # path or name on $PATH
@@ -604,6 +649,8 @@ agent2web/
 │   ├── config.rs        — Config struct, TOML deserialization
 │   ├── router.rs        — axum Router, all route registrations
 │   ├── state.rs         — AppState, RunState, ConvState, ConvEntry
+│   ├── auth.rs          — password middleware: validates `password` field on
+│   │                      all mutating requests; no-op when password unconfigured
 │   ├── handlers/
 │   │   ├── mod.rs
 │   │   ├── index.rs     — GET /
@@ -611,6 +658,7 @@ agent2web/
 │   │   ├── stream.rs    — GET /stream (SSE)
 │   │   ├── diff.rs      — GET /diff, GET /diff/range
 │   │   ├── audio.rs     — POST /audio
+│   │   ├── commit.rs    — POST /commit
 │   │   └── conversation.rs  — POST /conversation/new, GET /conversation/list,
 │   │                          POST /conversation/resume
 │   ├── agent.rs         — ForgeCode subprocess management, conversation ID
@@ -625,6 +673,10 @@ agent2web/
 ├── static/
 │   ├── style.css        — mobile-first CSS (inlined at build time)
 │   └── app.js           — hand-written JS (inlined at build time)
+├── tls/
+│   ├── generate.sh      — one-shot script to create a self-signed cert+key
+│   ├── cert.pem         — (git-ignored; generated by generate.sh)
+│   └── key.pem          — (git-ignored; generated by generate.sh)
 └── agent2web.toml.example
 ```
 
@@ -646,6 +698,8 @@ Static assets (`style.css`, `app.js`) are embedded into the binary at compile ti
 | `tracing` + `tracing-subscriber` | Structured logging |
 | `thiserror` | Error types |
 | `async-trait` | Async trait for SttProvider |
+| `axum-server` (feature `tls-rustls`) | TLS listener for axum; uses `rustls` under the hood |
+| `rustls` + `rustls-pemfile` | TLS implementation and PEM parsing |
 
 External runtime dependencies:
 - `forge` (ForgeCode binary)
@@ -662,10 +716,23 @@ External runtime dependencies:
 
 - The prompt is passed to `forge` as a single argument, not interpolated into a shell string. Subprocesses are spawned via `tokio::process::Command` with explicit argument lists, never via `sh -c`.
 - Conversation IDs are validated against `ConvState::history` before being passed to `forge`; arbitrary strings are rejected.
-- The server is not designed for public exposure. It should sit behind a reverse proxy (nginx/caddy) with HTTPS and, at minimum, HTTP Basic Auth or IP allowlisting.
 - The `project_dir` is configured at startup and is not user-controllable at runtime.
 - Audio uploads are size-limited (configurable, default 25 MB) to prevent local disk exhaustion.
 - SSE connections are limited to one per run; a new connection drops the previous one.
+
+### 14.1 Password Authentication
+
+All endpoints that produce a server-side action (`POST /run`, `POST /audio`, `POST /commit`, `POST /conversation/new`, `POST /conversation/resume`) require a `password` form field. The server compares it to the value of `server.password` in the configuration (or the `AGENT2WEB_PASSWORD` environment variable). A mismatch returns `403 Forbidden`. Read-only endpoints (`GET /`, `GET /stream`, `GET /diff`, `GET /conversation/list`, `GET /health`) are not password-protected.
+
+When `server.password` is empty (the default), authentication is disabled entirely — no password field is required or checked.
+
+The password is intentionally simple (no hashing, no sessions, no tokens). It is a shared secret transmitted over the encrypted connection and is sufficient for a single-user self-hosted deployment. The UI stores the value in `sessionStorage` and injects it automatically into every form.
+
+### 14.2 TLS
+
+When `server.tls.enabled = true`, the server binds a TLS listener using `axum-server` with `rustls`. The certificate and private key are read from the paths given by `server.tls.cert` and `server.tls.key`. A self-signed certificate is sufficient for personal use (see §17 for the generation script). Combined with the password, this provides reasonable security for a personal tool exposed over a home network or VPN without requiring a reverse proxy.
+
+When TLS is disabled the server binds a plain HTTP listener, which is appropriate when sitting behind a TLS-terminating reverse proxy such as nginx or Caddy.
 
 ---
 
@@ -680,6 +747,7 @@ External runtime dependencies:
 | **M5 — Voice Input** | Audio capture in browser, upload to `/audio`, Whisper API transcription, editable textarea |
 | **M6 — Polish** | Mobile layout refinement, diff history nav, error states, timeouts |
 | **M7 — Offline STT** | `whisper_cpp` provider implementation for fully local operation |
+| **M8 — Security** | Password authentication middleware; optional TLS listener with `axum-server`/`rustls`; `tls/generate.sh` script; manual commit button with accumulated-prompt body |
 
 ---
 
@@ -694,3 +762,48 @@ External runtime dependencies:
 4. **Conversation persistence across server restart:** Currently `ConvState` is in-memory only. A simple on-disk JSON file written after each state change would survive restarts with minimal added complexity, and would allow the user to resume conversations even after rebooting the server.
 
 5. **Streaming diff updates:** Currently the diff is loaded once after the run completes. For very long-running agents that commit incrementally, streaming intermediate diffs could be valuable.
+
+---
+
+## 17. TLS Setup
+
+When `server.tls.enabled = true`, a certificate and private key must be present before starting the server. The `tls/generate.sh` script creates a 10-year self-signed RSA-4096 certificate suitable for personal use:
+
+```sh
+#!/usr/bin/env bash
+# tls/generate.sh — generate a self-signed TLS certificate for agent2web
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)"
+
+openssl req \
+  -x509 \
+  -newkey rsa:4096 \
+  -keyout "${SCRIPT_DIR}/key.pem" \
+  -out    "${SCRIPT_DIR}/cert.pem" \
+  -sha256 \
+  -days   3650 \
+  -nodes \
+  -subj   "/CN=agent2web" \
+  -addext "subjectAltName=IP:127.0.0.1,IP:::1,DNS:localhost"
+
+echo "Done."
+echo "  Certificate: ${SCRIPT_DIR}/cert.pem"
+echo "  Private key: ${SCRIPT_DIR}/key.pem"
+echo
+echo "Add the following to agent2web.toml:"
+echo "  [server.tls]"
+echo "  enabled = true"
+echo "  cert    = \"tls/cert.pem\""
+echo "  key     = \"tls/key.pem\""
+```
+
+Run it once from the repository root:
+
+```sh
+bash tls/generate.sh
+```
+
+Both `tls/cert.pem` and `tls/key.pem` should be listed in `.gitignore`. The certificate is self-signed: browsers will show a certificate warning on first access. Accept it once (or install the cert as a trusted CA on your devices) and subsequent visits will connect silently.
+
+> **Note:** `tls/generate.sh` is included in the repository. `tls/cert.pem` and `tls/key.pem` are generated locally and must never be committed.
