@@ -1,0 +1,17 @@
+[package]
+name = "agent2web"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = "0.1.89"
+axum = "0.8.9"
+bytes = "1.11.1"
+clap = "4.6.1"
+reqwest = "0.13.4"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = ["full"] }
+toml = "1.1.2"
+tracing = "0.1.44"
