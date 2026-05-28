@@ -83,6 +83,17 @@
         stream = null;
 
         const blob = new Blob(chunks, { type: mimeType });
+
+        // Guard: if no audio data was captured (e.g. recording was too short),
+        // show a message instead of uploading an empty blob.
+        if (blob.size === 0) {
+          setStatus('Recording was empty — please try again.', true);
+          recordBtn.disabled = false;
+          stopBtn.disabled = true;
+          document.body.classList.remove('recording');
+          return;
+        }
+
         const form = new FormData();
         form.append('audio', blob, 'recording.webm');
 
