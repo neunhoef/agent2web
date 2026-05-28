@@ -12,11 +12,10 @@ use serde::Deserialize;
 use tracing::info;
 
 use crate::{
-    agent,
+    agent, auth,
     state::{AppState, RunStatus},
     templates,
 };
-
 #[derive(Debug, Deserialize)]
 pub struct RunForm {
     /// The prompt text to send to forge.
@@ -30,13 +29,8 @@ pub struct RunForm {
 /// agent task, then redirect to `/`.
 pub async fn post_run(State(state): State<Arc<AppState>>, Form(form): Form<RunForm>) -> Response {
     // ── Password check ────────────────────────────────────────────────────
-    let expected = &state.config.server.password;
-    if !expected.is_empty() && form.password != *expected {
-        return (
-            StatusCode::FORBIDDEN,
-            Html(templates::render_error(403, "Incorrect password.")),
-        )
-            .into_response();
+    if let Some(err) = auth::check_password(&state.config.server, &form.password) {
+        return err;
     }
 
     // ── Validate prompt ───────────────────────────────────────────────────

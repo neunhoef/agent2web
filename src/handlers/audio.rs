@@ -29,7 +29,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use crate::state::AppState;
+use crate::{auth, state::AppState};
 
 // Maximum audio upload size: 25 MB.
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
@@ -93,8 +93,7 @@ pub async fn post_audio(State(state): State<Arc<AppState>>, mut multipart: Multi
     }
 
     // ── Password check ────────────────────────────────────────────────────
-    let expected = &state.config.server.password;
-    if !expected.is_empty() && password != *expected {
+    if !auth::is_password_valid(&state.config.server, &password) {
         return error_response(StatusCode::FORBIDDEN, "Incorrect password.");
     }
 

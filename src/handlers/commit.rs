@@ -19,7 +19,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use crate::{diff as git_diff, state::AppState, templates};
+use crate::{auth, diff as git_diff, state::AppState, templates};
 
 // ── GET /commit ───────────────────────────────────────────────────────────────
 
@@ -89,13 +89,8 @@ pub async fn post_commit(
     Form(form): Form<CommitForm>,
 ) -> Response {
     // ── Password check ────────────────────────────────────────────────────
-    let expected = &state.config.server.password;
-    if !expected.is_empty() && form.password != *expected {
-        return (
-            StatusCode::FORBIDDEN,
-            Html(templates::render_error(403, "Incorrect password.")),
-        )
-            .into_response();
+    if let Some(err) = auth::check_password(&state.config.server, &form.password) {
+        return err;
     }
 
     // ── Validate subject ──────────────────────────────────────────────────

@@ -18,7 +18,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use crate::{
-    agent,
+    agent, auth,
     state::{AppState, ConvEntry},
     templates,
 };
@@ -41,16 +41,12 @@ pub async fn post_conversation_new(
     Form(form): Form<NewConvForm>,
 ) -> Response {
     // ── Password check ────────────────────────────────────────────────────
-    let expected = &state.config.server.password;
-    if !expected.is_empty() && form.password != *expected {
-        return (
-            StatusCode::FORBIDDEN,
-            Html(templates::render_error(403, "Incorrect password.")),
-        )
-            .into_response();
+    // ── Password check ────────────────────────────────────────────────────
+    if let Some(err) = auth::check_password(&state.config.server, &form.password) {
+        return err;
     }
 
-    // ── Reject if a run is already in progress ────────────────────────────
+    // ── Reject if a run is already in progress ──────────────────
     {
         let run = state.run.lock().expect("run mutex poisoned");
         if run.status.is_running() {
@@ -66,7 +62,6 @@ pub async fn post_conversation_new(
     }
 
     let forge_binary = state.config.forge.binary.clone();
-
     match agent::create_new_conversation(&forge_binary).await {
         Ok(id) => {
             info!(conv_id = %id, "Created new forge conversation");
@@ -122,16 +117,12 @@ pub async fn post_conversation_resume(
     Form(form): Form<ResumeConvForm>,
 ) -> Response {
     // ── Password check ────────────────────────────────────────────────────
-    let expected = &state.config.server.password;
-    if !expected.is_empty() && form.password != *expected {
-        return (
-            StatusCode::FORBIDDEN,
-            Html(templates::render_error(403, "Incorrect password.")),
-        )
-            .into_response();
+    // ── Password check ────────────────────────────────────────────────────
+    if let Some(err) = auth::check_password(&state.config.server, &form.password) {
+        return err;
     }
 
-    // ── Reject if a run is already in progress ────────────────────────────
+    // ── Reject if a run is already in progress ──────────────────
     {
         let run = state.run.lock().expect("run mutex poisoned");
         if run.status.is_running() {

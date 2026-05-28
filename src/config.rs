@@ -50,7 +50,7 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TlsConfig {
     /// Enable TLS listener.
     #[serde(default)]

@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 mod agent;
+mod auth;
 mod config;
 mod diff;
 mod handlers;
@@ -42,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = config.server.bind.clone();
     let project_dir = config.server.project_dir.clone();
     let max_history = config.diff.max_history;
+    let tls_config = config.server.tls.clone();
 
     info!(
         bind = %bind_addr,
@@ -70,11 +72,51 @@ async fn main() -> anyhow::Result<()> {
     // Build the axum router.
     let app = router::build(state);
 
-    // Bind and serve.
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    info!("Listening on http://{}", listener.local_addr()?);
+    // Bind and serve — TLS when configured, plain HTTP otherwise.
+    let addr: std::net::SocketAddr = bind_addr
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind_addr, e))?;
 
-    axum::serve(listener, app).await?;
+    match tls_config {
+        Some(ref tls) if tls.enabled => {
+            // ── TLS listener (axum-server + rustls) ──────────────────────────
+            if tls.cert.is_empty() || tls.key.is_empty() {
+                anyhow::bail!(
+                    "TLS is enabled but [server.tls] cert or key path is empty. \
+                     Run `bash tls/generate.sh` to create a self-signed certificate."
+                );
+            }
+
+            info!(
+                addr = %addr,
+                cert = %tls.cert,
+                key  = %tls.key,
+                "Listening on https://{} (TLS)", addr
+            );
+
+            let rustls_config =
+                axum_server::tls_rustls::RustlsConfig::from_pem_file(&tls.cert, &tls.key)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to load TLS certificate '{}' / key '{}': {}",
+                            tls.cert,
+                            tls.key,
+                            e
+                        )
+                    })?;
+
+            axum_server::bind_rustls(addr, rustls_config)
+                .serve(app.into_make_service())
+                .await?;
+        }
+        _ => {
+            // ── Plain HTTP listener ────────────────────────────────────────────
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            info!("Listening on http://{}", listener.local_addr()?);
+            axum::serve(listener, app).await?;
+        }
+    }
 
     Ok(())
 }
