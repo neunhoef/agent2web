@@ -80,7 +80,7 @@ impl Default for ForgeConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct SttConfig {
-    /// Which STT provider to use: "whisper_server", "openai", or "deepgram".
+    /// Which STT provider to use: "whisper_server", "whisper_cpp", "openai", or "deepgram".
     #[serde(default = "defaults::stt_provider")]
     pub provider: String,
 
@@ -91,6 +91,9 @@ pub struct SttConfig {
 
     /// Settings specific to the local whisper-server provider.
     pub whisper_server: Option<WhisperServerConfig>,
+
+    /// Settings for the whisper-cli subprocess provider.
+    pub whisper_cpp: Option<WhisperCppConfig>,
 
     /// Settings for the OpenAI Whisper API provider.
     pub openai: Option<OpenAiSttConfig>,
@@ -105,6 +108,7 @@ impl Default for SttConfig {
             provider: defaults::stt_provider(),
             api_key: String::new(),
             whisper_server: None,
+            whisper_cpp: None,
             openai: None,
             deepgram: None,
         }
@@ -116,6 +120,25 @@ pub struct WhisperServerConfig {
     /// HTTP URL of the running whisper-server endpoint.
     #[serde(default = "defaults::whisper_server_url")]
     pub url: String,
+}
+
+/// Configuration for the `whisper_cpp` provider (subprocess-based).
+#[derive(Debug, Deserialize)]
+pub struct WhisperCppConfig {
+    /// Path or name of the `whisper-cli` binary on `$PATH`.
+    #[serde(default = "defaults::whisper_cpp_binary")]
+    pub binary: String,
+
+    /// Path to the GGML model file (e.g. `models/ggml-large-v3-turbo.bin`).
+    pub model: String,
+
+    /// BCP-47 language code or `"auto"` for automatic detection.
+    #[serde(default = "defaults::whisper_cpp_language")]
+    pub language: String,
+
+    /// Number of CPU threads to pass to `whisper-cli` via `-t`.
+    #[serde(default = "defaults::whisper_cpp_threads")]
+    pub threads: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +191,15 @@ mod defaults {
     }
     pub fn whisper_server_url() -> String {
         "http://127.0.0.1:8090/v1/audio/transcriptions".to_string()
+    }
+    pub fn whisper_cpp_binary() -> String {
+        "whisper-cli".to_string()
+    }
+    pub fn whisper_cpp_language() -> String {
+        "auto".to_string()
+    }
+    pub fn whisper_cpp_threads() -> u32 {
+        4
     }
     pub fn openai_model() -> String {
         "whisper-1".to_string()

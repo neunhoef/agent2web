@@ -47,6 +47,26 @@ pub fn build_provider(config: &SttConfig) -> Arc<dyn SttProvider> {
                 "whisper-1".to_string(),
             ))
         }
+        "whisper_cpp" => {
+            let cfg = config.whisper_cpp.as_ref();
+            let binary = cfg
+                .map(|c| c.binary.clone())
+                .unwrap_or_else(|| "whisper-cli".to_string());
+            let model = cfg.map(|c| c.model.clone()).unwrap_or_else(|| {
+                tracing::warn!(
+                    "No model path configured for whisper_cpp provider; \
+                         set [stt.whisper_cpp] model = \"/path/to/model.bin\" in agent2web.toml"
+                );
+                String::new()
+            });
+            let language = cfg
+                .map(|c| c.language.clone())
+                .unwrap_or_else(|| "auto".to_string());
+            let threads = cfg.map(|c| c.threads).unwrap_or(4);
+            Arc::new(whisper_cpp::WhisperCppProvider::new(
+                binary, model, language, threads,
+            ))
+        }
         "openai" => {
             let api_key = config.api_key.clone();
             let model = config

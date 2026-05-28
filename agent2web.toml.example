@@ -36,7 +36,14 @@ commit_cmd   = "forge commit"
 auto_push    = false
 
 [stt]
-# STT provider to use: "whisper_server" (local), "openai", or "deepgram".
+# STT provider to use: "whisper_server", "whisper_cpp", "openai", or "deepgram".
+#
+#   whisper_server — Recommended for local operation.  Talks to a persistent
+#                    whisper-server HTTP process (model stays warm in VRAM).
+#   whisper_cpp    — Invokes whisper-cli as a subprocess on each request.
+#                    Simpler to set up but incurs a model-load penalty each time.
+#   openai         — OpenAI Whisper cloud API (requires api_key).
+#   deepgram       — Deepgram Nova-3 cloud API (requires api_key).
 provider     = "whisper_server"
 
 # API key for cloud providers. Can also be set via AGENT2WEB_STT_API_KEY.
@@ -49,6 +56,17 @@ api_key      = ""
 #     --host 127.0.0.1 --port 8090 \
 #     --inference-path /v1/audio/transcriptions
 url = "http://127.0.0.1:8090/v1/audio/transcriptions"
+
+[stt.whisper_cpp]
+# Path or name of the whisper-cli binary (must be on $PATH or absolute).
+binary   = "whisper-cli"
+# Path to the GGML model file — required when provider = "whisper_cpp".
+# Download with:  bash models/download-ggml-model.sh large-v3-turbo
+model    = "/path/to/ggml-large-v3-turbo.bin"
+# BCP-47 language code, or "auto" for automatic detection.
+language = "auto"
+# Number of CPU threads to use for inference.
+threads  = 4
 
 [stt.openai]
 model = "whisper-1"
