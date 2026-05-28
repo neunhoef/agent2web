@@ -72,15 +72,59 @@ pub struct CommitForm {
     #[serde(default)]
     pub password: String,
     /// Selected file paths to stage (may be empty — validated below).
-    /// axum's `Form` extractor collects repeated fields into a `Vec` when the
-    /// field is declared as `Vec<String>`.
-    #[serde(default)]
+    ///
+    /// When multiple checkboxes are checked the browser sends repeated keys
+    /// (`files=a&files=b`) which serde_urlencoded maps to `Vec<String>`.
+    /// When exactly one checkbox is checked the browser sends a bare string
+    /// (`files=a`), which serde_urlencoded cannot coerce into a sequence on
+    /// its own — the custom deserializer below handles both cases.
+    #[serde(default, deserialize_with = "string_or_seq")]
     pub files: Vec<String>,
     /// Whether to append prompts to the commit body.
     /// An HTML checkbox sends `"on"` when checked and nothing when unchecked;
     /// we treat any non-empty value as true.
     #[serde(default)]
     pub include_prompts: String,
+}
+
+/// Deserialize a form field that may arrive as a single string or as a
+/// repeated-key sequence.  Needed because HTML forms submit `field=value`
+/// (string) when only one checkbox is ticked, and `field=v1&field=v2`
+/// (sequence) when several are ticked.
+fn string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{SeqAccess, Visitor};
+    use std::fmt;
+
+    struct StringOrSeq;
+
+    impl<'de> Visitor<'de> for StringOrSeq {
+        type Value = Vec<String>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a string or a sequence of strings")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(vec![v.to_owned()])
+        }
+
+        fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(vec![v])
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(v) = seq.next_element::<String>()? {
+                out.push(v);
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrSeq)
 }
 
 /// `POST /commit` — stage selected files and commit with the supplied subject.
