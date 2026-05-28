@@ -161,9 +161,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 1200px;
   width: 100%;
-  margin: 0 auto;
 }
 
 /* ── Cards / Sections ── */
@@ -670,9 +668,17 @@ input[type="text"]:focus {
 @media (min-width: 900px) {
   main {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 3fr 2fr;
     grid-template-rows: auto;
     align-items: start;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+  }
+
+  /* Single-column pages (commit, diff, error) */
+  main.single-col {
+    display: flex;
+    flex-direction: column;
   }
 
   .col-left {
@@ -688,6 +694,11 @@ input[type="text"]:focus {
     flex-direction: column;
     gap: 1rem;
     position: sticky;
-    top: 5rem;
+    top: 4.5rem;
+  }
+
+  /* On desktop the output box can be taller since we have more vertical room */
+  .output-box {
+    max-height: 55vh;
   }
 }

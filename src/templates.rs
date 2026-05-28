@@ -125,6 +125,10 @@ pub fn render_index(
     <!-- ── Agent output section ── -->
     {output_section}
 
+  </div><!-- .col-left -->
+
+  <div class="col-right">
+
     <!-- ── Action links ── -->
     <div class="card">
       <div class="card-header">
@@ -144,7 +148,7 @@ pub fn render_index(
       </div>
     </div>
 
-  </div><!-- .col-left -->
+  </div><!-- .col-right -->
 
 </main>
 
@@ -291,7 +295,7 @@ pub fn render_commit_page(
   {password_field}
 </header>
 
-<main>
+<main class="single-col">
   <div class="col-left">
 
     <div class="card">
@@ -585,7 +589,7 @@ pub fn render_no_diff(message: &str) -> String {
 </head>
 <body>
 <header><h1>agent2web</h1></header>
-<main>
+<main class="single-col">
   <div class="card" style="margin-top:2rem">
     <div class="card-header"><h2>Diff</h2></div>
     <div class="card-body">
@@ -620,7 +624,7 @@ pub fn render_error(status: u16, message: &str) -> String {
 </head>
 <body>
 <header><h1>agent2web</h1></header>
-<main>
+<main class="single-col">
   <div class="card" style="margin-top:2rem">
     <div class="card-header"><h2>Error {status}</h2></div>
     <div class="card-body">
