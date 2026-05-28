@@ -12,6 +12,7 @@ dependencies = [
  "axum-server",
  "bytes",
  "clap",
+ "form_urlencoded",
  "futures",
  "reqwest",
  "serde",

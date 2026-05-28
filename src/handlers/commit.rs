@@ -9,17 +9,18 @@
 use std::sync::Arc;
 
 use axum::{
-    Form,
+    body::Bytes,
     extract::State,
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
 };
-use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
 use crate::{auth, diff as git_diff, state::AppState, templates};
+
+use form_urlencoded;
 
 // ── GET /commit ───────────────────────────────────────────────────────────────
 
@@ -64,74 +65,65 @@ pub async fn get_commit(State(state): State<Arc<AppState>>) -> Response {
 
 // ── POST /commit ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
-pub struct CommitForm {
-    /// Commit subject line (required).
-    pub message: String,
-    /// Password (only required when `server.password` is set).
-    #[serde(default)]
-    pub password: String,
-    /// Selected file paths to stage (may be empty — validated below).
-    ///
-    /// When multiple checkboxes are checked the browser sends repeated keys
-    /// (`files=a&files=b`) which serde_urlencoded maps to `Vec<String>`.
-    /// When exactly one checkbox is checked the browser sends a bare string
-    /// (`files=a`), which serde_urlencoded cannot coerce into a sequence on
-    /// its own — the custom deserializer below handles both cases.
-    #[serde(default, deserialize_with = "string_or_seq")]
-    pub files: Vec<String>,
-    /// Whether to append prompts to the commit body.
-    /// An HTML checkbox sends `"on"` when checked and nothing when unchecked;
-    /// we treat any non-empty value as true.
-    #[serde(default)]
-    pub include_prompts: String,
+/// Parsed fields from the commit form body.
+///
+/// We parse the raw `application/x-www-form-urlencoded` body ourselves instead
+/// of using axum's `Form<T>` extractor because `serde_urlencoded` (which axum
+/// uses internally) does not support repeated keys: when N checkboxes are
+/// checked the browser sends `files=a&files=b&…`, and serde sees the second
+/// `files` key as a "duplicate field" error.  Iterating with `form_urlencoded`
+/// handles any number of repeated keys correctly.
+struct CommitForm {
+    message: String,
+    password: String,
+    files: Vec<String>,
+    include_prompts: bool,
 }
 
-/// Deserialize a form field that may arrive as a single string or as a
-/// repeated-key sequence.  Needed because HTML forms submit `field=value`
-/// (string) when only one checkbox is ticked, and `field=v1&field=v2`
-/// (sequence) when several are ticked.
-fn string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::{SeqAccess, Visitor};
-    use std::fmt;
+/// Parse a raw `application/x-www-form-urlencoded` body into `CommitForm`.
+///
+/// Returns `None` if the required `message` field is missing.
+fn parse_commit_form(body: &[u8]) -> Option<CommitForm> {
+    let mut message = None;
+    let mut password = String::new();
+    let mut files = Vec::new();
+    let mut include_prompts = false;
 
-    struct StringOrSeq;
-
-    impl<'de> Visitor<'de> for StringOrSeq {
-        type Value = Vec<String>;
-
-        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a string or a sequence of strings")
-        }
-
-        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            Ok(vec![v.to_owned()])
-        }
-
-        fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
-            Ok(vec![v])
-        }
-
-        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-            let mut out = Vec::new();
-            while let Some(v) = seq.next_element::<String>()? {
-                out.push(v);
-            }
-            Ok(out)
+    for (key, value) in form_urlencoded::parse(body) {
+        match key.as_ref() {
+            "message" => message = Some(value.into_owned()),
+            "password" => password = value.into_owned(),
+            "files" => files.push(value.into_owned()),
+            "include_prompts" => include_prompts = !value.is_empty(),
+            _ => {}
         }
     }
 
-    deserializer.deserialize_any(StringOrSeq)
+    Some(CommitForm {
+        message: message?,
+        password,
+        files,
+        include_prompts,
+    })
 }
 
 /// `POST /commit` — stage selected files and commit with the supplied subject.
 pub async fn post_commit(
     State(state): State<Arc<AppState>>,
-    Form(form): Form<CommitForm>,
+    body: Bytes,
 ) -> Response {
+    // ── Parse form body ───────────────────────────────────────────────────
+    let form = match parse_commit_form(&body) {
+        Some(f) => f,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Html(templates::render_error(400, "Missing required field: message")),
+            )
+                .into_response();
+        }
+    };
+
     // ── Password check ────────────────────────────────────────────────────
     if let Some(err) = auth::check_password(&state.config.server, &form.password) {
         return err;
@@ -208,14 +200,13 @@ pub async fn post_commit(
     }
 
     // ── Build commit message ──────────────────────────────────────────────
-    let include_prompts = !form.include_prompts.is_empty();
     let commit_message = {
         let prompts = state
             .prompts_since_commit
             .lock()
             .expect("prompts mutex poisoned")
             .clone();
-        if include_prompts {
+        if form.include_prompts {
             build_commit_message(&subject, &prompts).await
         } else {
             subject.clone()
