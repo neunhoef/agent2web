@@ -317,7 +317,7 @@ pub struct ChangedFile {
 pub async fn list_changed_files(project_dir: &str) -> anyhow::Result<Vec<ChangedFile>> {
     let output = Command::new("git")
         .current_dir(project_dir)
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain", "-uall"])
         .output()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to spawn git: {e}"))?;
