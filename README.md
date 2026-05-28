@@ -154,16 +154,22 @@ binary = "forge"
 
 # ── Speech-to-text ────────────────────────────────────────────────────────────
 [stt]
-# Which provider to use: "whisper_server" (default), "openai", or "deepgram".
+# Which STT provider to use: "whisper_server" (default), "whisper_cpp", "openai", or "deepgram".
 provider = "whisper_server"
 
-# API key for cloud providers (openai / deepgram).
-# Override with the AGENT2WEB_STT_API_KEY environment variable.
+# API key for cloud STT providers.
 api_key  = ""
 
 # Settings for the local whisper-server provider.
 [stt.whisper_server]
 url = "http://127.0.0.1:8090/v1/audio/transcriptions"
+
+# Settings for the whisper-cli subprocess provider.
+[stt.whisper_cpp]
+binary   = "whisper-cli"                         # name or path
+model    = "/path/to/ggml-large-v3-turbo.bin"   # required
+language = "auto"                                # or "en", "de", …
+threads  = 4                                     # CPU threads
 
 # Settings for the OpenAI provider.
 [stt.openai]
@@ -282,6 +288,24 @@ model = "whisper-1"
 ```
 
 Cost: ~$0.006/minute — roughly $0.003 per 30-second dictation clip.
+
+### whisper.cpp subprocess (`whisper_cpp`)
+
+Invokes `whisper-cli` as a subprocess for each request.  Simpler to set up
+than `whisper_server` (no persistent process required), but pays the full
+model-load penalty on every request (~2–4 s on CPU, ~0.5 s on a mid-range
+GPU).  Prefer `whisper_server` if latency matters.
+
+```toml
+[stt]
+provider = "whisper_cpp"
+
+[stt.whisper_cpp]
+binary   = "whisper-cli"                        # name or absolute path
+model    = "/path/to/ggml-large-v3-turbo.bin"  # required
+language = "auto"                               # or "en", "de", …
+threads  = 4                                    # CPU threads
+```
 
 ### Deepgram Nova-3
 
@@ -435,11 +459,12 @@ agent2web/
 │   │   ├── index.rs       GET /
 │   │   ├── run.rs         POST /run
 │   │   └── stream.rs      GET /stream (SSE)
+│   ├── auth.rs            password authentication helper
 │   └── stt/
 │       ├── mod.rs         SttProvider trait + factory
 │       ├── whisper_api.rs OpenAI-compatible provider (whisper-server + OpenAI)
 │       ├── deepgram.rs    Deepgram Nova-3 provider
-│       └── whisper_cpp.rs M8 stub (not yet implemented)
+│       └── whisper_cpp.rs whisper-cli subprocess provider
 ├── static/
 │   ├── style.css          mobile-first CSS (embedded at compile time)
 │   └── app.js             hand-written JS: audio capture, SSE, password (embedded)
