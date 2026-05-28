@@ -91,8 +91,12 @@
         if (pwdField) form.append('password', pwdField.value);
 
         setStatus('Transcribing…');
-        recordBtn.disabled = false;
+        recordBtn.disabled = true;
         stopBtn.disabled = true;
+        // Disable the prompt area while transcription is in flight.
+        promptArea.disabled = true;
+        const sendBtn = document.querySelector('#run-form button[type="submit"]');
+        if (sendBtn) sendBtn.disabled = true;
 
         try {
           const res = await fetch('/audio', { method: 'POST', body: form });
@@ -105,6 +109,11 @@
           }
         } catch (err) {
           setStatus('Upload failed: ' + err.message, true);
+        } finally {
+          // Re-enable prompt area (send button is controlled by run state).
+          promptArea.disabled = false;
+          if (sendBtn) sendBtn.disabled = false;
+          recordBtn.disabled = false;
         }
 
         document.body.classList.remove('recording');

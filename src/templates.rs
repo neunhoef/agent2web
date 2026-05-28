@@ -12,7 +12,7 @@ const HTMX_CDN: &str = "https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js";
 use std::time::SystemTime;
 
 use crate::handlers::commit::ChangedFile;
-use crate::state::{ConvState, RunState, RunStatus};
+use crate::state::{CommitSummary, ConvState, RunState, RunStatus};
 
 // ── Page shell ────────────────────────────────────────────────────────────
 
@@ -23,6 +23,7 @@ pub fn render_index(
     project_dir: &str,
     password_enabled: bool,
     prompts_count: usize,
+    commit_history: &[CommitSummary],
 ) -> String {
     let project_name = std::path::Path::new(project_dir)
         .file_name()
@@ -31,8 +32,10 @@ pub fn render_index(
 
     let conv_bar = render_conv_bar(conv);
     let run_status_badge = render_run_status_badge(&run.status);
+    let run_dot = render_header_run_dot(&run.status);
     let output_section = render_output_section(run);
     let is_running = run.status.is_running();
+    let recent_commits_section = render_recent_commits(commit_history);
 
     // Prompts hint for the action section.
     let prompts_hint = if prompts_count == 0 {
@@ -61,6 +64,7 @@ pub fn render_index(
 <header>
   <h1>agent2web</h1>
   <span class="project-name">project: {project_name}</span>
+  {run_dot}
   <div class="header-spacer"></div>
   {password_field}
 </header>
@@ -136,11 +140,7 @@ pub fn render_index(
             &#x2714; Review &amp; Commit
           </a>
         </div>
-        <p class="commit-hint" style="margin-top:0.75rem;font-size:0.8rem">
-          Past commits: <a href="/diff/commit" style="color:var(--accent)">HEAD</a>
-          &nbsp;|&nbsp;
-          <a href="/diff/range?from=HEAD~3&amp;to=HEAD" style="color:var(--accent)">HEAD~3..HEAD</a>
-        </p>
+        {recent_commits_section}
       </div>
     </div>
 
@@ -154,7 +154,9 @@ pub fn render_index(
         project_name = html_escape(&project_name),
         conv_bar = conv_bar,
         run_status_badge = run_status_badge,
+        run_dot = run_dot,
         output_section = output_section,
+        recent_commits_section = recent_commits_section,
         password_field = if password_enabled {
             r#"<div class="password-group">
           <label for="password">Password:</label>
@@ -166,6 +168,59 @@ pub fn render_index(
         disabled = if is_running { "disabled" } else { "" },
         prompts_hint = prompts_hint,
     )
+}
+
+// ── Recent commits section ─────────────────────────────────────────────────
+
+fn render_recent_commits(history: &[CommitSummary]) -> String {
+    if history.is_empty() {
+        return String::new();
+    }
+
+    let items: String = history
+        .iter()
+        .map(|c| {
+            format!(
+                r#"<li class="recent-commit-item">
+            <a href="/diff/commit?ref={sha}" class="recent-commit-link">
+              <code class="recent-commit-sha">{short}</code>
+              <span class="recent-commit-subject">{subject}</span>
+            </a>
+          </li>"#,
+                sha = html_escape(&c.sha),
+                short = html_escape(&c.short_sha),
+                subject = html_escape(truncate(&c.subject, 72)),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<div class="recent-commits">
+          <h3 style="margin-top:1.25rem;margin-bottom:0.5rem">Recent Commits</h3>
+          <ul class="recent-commit-list">{items}</ul>
+        </div>"#
+    )
+}
+
+// ── Header run dot ─────────────────────────────────────────────────────────
+
+/// A small coloured dot in the sticky header that reflects the current run
+/// state, always visible even when the user has scrolled past the prompt card.
+fn render_header_run_dot(status: &RunStatus) -> String {
+    let class = match status {
+        RunStatus::Idle => "run-dot run-dot-idle",
+        RunStatus::Running => "run-dot run-dot-running",
+        RunStatus::Done => "run-dot run-dot-done",
+        RunStatus::Failed { .. } => "run-dot run-dot-failed",
+    };
+    let title = match status {
+        RunStatus::Idle => "Idle",
+        RunStatus::Running => "Running\u{2026}",
+        RunStatus::Done => "Run complete",
+        RunStatus::Failed { .. } => "Run failed",
+    };
+    format!(r#"<span class="{class}" title="{title}"></span>"#)
 }
 
 // ── Commit page ────────────────────────────────────────────────────────────
@@ -509,6 +564,45 @@ pub fn render_conv_list(conv: &ConvState) -> String {
         .collect();
 
     format!(r#"<div class="conv-history">{entries}</div>"#)
+}
+
+// ── No-diff info page ──────────────────────────────────────────────────────
+
+/// Render a neutral "nothing to diff" page — used when `git diff` produces no
+/// output (clean working tree or empty commit range).
+///
+/// Unlike `render_error`, this uses an info-styled alert and does not imply
+/// an error condition.
+pub fn render_no_diff(message: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>No Changes — agent2web</title>
+  <style>{STYLE_CSS}</style>
+</head>
+<body>
+<header><h1>agent2web</h1></header>
+<main>
+  <div class="card" style="margin-top:2rem">
+    <div class="card-header"><h2>Diff</h2></div>
+    <div class="card-body">
+      <div class="alert alert-info" style="margin-bottom:1rem">
+        &#x2139; {message}
+      </div>
+      <div class="diff-controls">
+        <a href="/" class="btn btn-secondary">&#x2190; Back to Home</a>
+        <a href="/commit" class="btn btn-secondary">&#x2714; Commit Page</a>
+      </div>
+    </div>
+  </div>
+</main>
+</body>
+</html>"#,
+        message = html_escape(message),
+    )
 }
 
 // ── Error page ─────────────────────────────────────────────────────────────

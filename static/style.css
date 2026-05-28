@@ -110,6 +110,8 @@ header h1 {
   gap: 0.75rem;
   flex-wrap: wrap;
   font-size: 0.85rem;
+  /* Allow the bar to wrap gracefully on very narrow screens */
+  row-gap: 0.4rem;
 }
 
 .conv-badge {
@@ -138,6 +140,19 @@ header h1 {
 }
 
 .conv-bar-spacer { flex: 1; }
+
+/* ── Header run-state dot ── */
+.run-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.run-dot-idle    { background: var(--text-muted); opacity: 0.5; }
+.run-dot-running { background: var(--accent); animation: pulse 1s infinite; }
+.run-dot-done    { background: var(--success); }
+.run-dot-failed  { background: var(--danger); }
 
 /* ── Main layout ── */
 main {
@@ -332,6 +347,53 @@ textarea:disabled {
 .status-done    { background: #1a3a2a; color: var(--success); }
 .status-failed  { background: #3a1a1a; color: var(--danger); }
 
+/* ── Recent commits list ── */
+.recent-commit-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.recent-commit-item {
+  border-bottom: 1px solid var(--border);
+}
+.recent-commit-item:last-child { border-bottom: none; }
+
+.recent-commit-link {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.35rem 0.6rem;
+  text-decoration: none;
+  transition: background 0.1s;
+  min-height: 36px;
+  align-items: center;
+}
+.recent-commit-link:hover { background: var(--surface2); }
+
+.recent-commit-sha {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  flex-shrink: 0;
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.3rem;
+}
+
+.recent-commit-subject {
+  font-size: 0.82rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Commit section ── */
 .commit-row {
   display: flex;
@@ -414,7 +476,8 @@ textarea:disabled {
   display: flex;
   gap: 0.5rem;
   align-items: center;
-  min-width: 22rem;
+  /* Clamp width so it never overflows the viewport on narrow mobile screens */
+  width: min(22rem, calc(100vw - 1.5rem));
   z-index: 200;
   box-shadow: var(--shadow);
 }

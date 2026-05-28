@@ -115,6 +115,31 @@ impl ConvState {
     }
 }
 
+// ── Commit history ─────────────────────────────────────────────────────────
+
+/// A single entry in the recent-commits list shown in the UI.
+#[derive(Debug, Clone)]
+pub struct CommitSummary {
+    /// Full 40-character SHA.
+    pub sha: String,
+    /// First 8 characters of the SHA, for compact display.
+    pub short_sha: String,
+    /// First line of the commit message (the subject).
+    pub subject: String,
+}
+
+impl CommitSummary {
+    pub fn new(sha: impl Into<String>, subject: impl Into<String>) -> Self {
+        let sha = sha.into();
+        let short_sha = sha[..sha.len().min(8)].to_string();
+        Self {
+            sha,
+            short_sha,
+            subject: subject.into(),
+        }
+    }
+}
+
 // ── Application state ──────────────────────────────────────────────────────
 
 /// Shared application state, wrapped in `Arc` and injected into every handler
@@ -136,6 +161,9 @@ pub struct AppState {
     pub sse_tx: broadcast::Sender<String>,
     /// Configured speech-to-text provider (built once at startup).
     pub stt: Arc<dyn SttProvider>,
+    /// Recent git commits for the diff history nav, most-recent first.
+    /// Populated from `git log` at startup and updated after each commit.
+    pub commit_history: Mutex<Vec<CommitSummary>>,
 }
 
 impl AppState {
@@ -149,6 +177,7 @@ impl AppState {
             config,
             sse_tx,
             stt,
+            commit_history: Mutex::new(Vec::new()),
         })
     }
 }

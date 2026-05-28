@@ -10,6 +10,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{debug, warn};
 
+use crate::state::CommitSummary;
+
 /// Output of a diff rendering operation.
 pub struct DiffResult {
     /// The full HTML page emitted by diff2html-cli.
@@ -210,4 +212,47 @@ async fn run_diff(project_dir: &str, git_args: &[&str]) -> Result<DiffResult> {
         is_empty: html.trim().is_empty(),
         html,
     })
+}
+
+// ── Commit history helpers ─────────────────────────────────────────────────
+
+/// Query `git log` and return up to `max` recent commits, most-recent first.
+///
+/// Uses the format `%H %s` (full SHA, space, subject line) which is safe to
+/// parse: the SHA is always exactly 40 hex characters.
+pub async fn get_recent_commits(project_dir: &str, max: usize) -> Result<Vec<CommitSummary>> {
+    let max_str = max.to_string();
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["log", &format!("-{max_str}"), "--format=%H %s"])
+        .output()
+        .await
+        .context("Failed to spawn git log")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git log failed: {}", stderr.trim());
+    }
+
+    let commits = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| l.len() > 40)
+        .map(|l| {
+            let sha = l[..40].to_string();
+            let subject = l[41..].trim().to_string();
+            CommitSummary::new(sha, subject)
+        })
+        .collect();
+
+    Ok(commits)
+}
+
+/// Return the single most-recent commit's SHA and subject.
+///
+/// Convenience wrapper around [`get_recent_commits`] with `max = 1`.
+pub async fn get_latest_commit(project_dir: &str) -> Result<CommitSummary> {
+    let mut commits = get_recent_commits(project_dir, 1).await?;
+    commits
+        .pop()
+        .ok_or_else(|| anyhow::anyhow!("git log produced no output — is this a git repository?"))
 }

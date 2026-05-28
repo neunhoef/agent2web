@@ -38,44 +38,31 @@ async fn run_agent(state: Arc<AppState>, prompt: String) {
         "Starting agent run"
     );
 
-    let run_result = timeout(
-        Duration::from_secs(timeout_secs),
-        do_run(&state, &prompt, &project_dir, &forge_binary),
-    )
-    .await;
-
-    match run_result {
-        Err(_elapsed) => {
-            warn!(timeout_secs, "Agent run timed out");
-            let mut run = state.run.lock().expect("run mutex");
-            run.status = RunStatus::Failed {
-                reason: format!("Timed out after {timeout_secs} seconds"),
-            };
-        }
-
-        Ok(Err(e)) => {
-            warn!(error = %e, "Agent run failed with error");
+    // Timeout handling is done inside `do_run` so the subprocess can be
+    // explicitly killed when the deadline expires.
+    match do_run(&state, &prompt, &project_dir, &forge_binary, timeout_secs).await {
+        Err(e) => {
+            warn!(error = %e, "Agent run failed or timed out");
             let mut run = state.run.lock().expect("run mutex");
             run.status = RunStatus::Failed {
                 reason: e.to_string(),
             };
         }
 
-        Ok(Ok(exit_success)) => {
+        Ok(exit_success) => {
             info!(exit_success, "forge subprocess exited");
 
             // Update conversation state.
             update_conv_state(&state, &forge_binary, &prompt, is_first_run).await;
 
-            if exit_success {
-                let mut run = state.run.lock().expect("run mutex");
-                run.status = RunStatus::Done;
+            let mut run = state.run.lock().expect("run mutex");
+            run.status = if exit_success {
+                RunStatus::Done
             } else {
-                let mut run = state.run.lock().expect("run mutex");
-                run.status = RunStatus::Failed {
+                RunStatus::Failed {
                     reason: "forge exited with non-zero status".to_string(),
-                };
-            }
+                }
+            };
         }
     }
 
@@ -89,13 +76,18 @@ async fn run_agent(state: Arc<AppState>, prompt: String) {
 /// Spawn `forge -p "<prompt>"` and stream its stdout/stderr into the shared
 /// output buffer and the SSE broadcast channel.
 ///
+/// The timeout is enforced inside this function: if `timeout_secs` elapses
+/// before the subprocess exits, the subprocess is killed with SIGKILL and
+/// an error is returned.
+///
 /// Returns `Ok(true)` if forge exited with status 0, `Ok(false)` on non-zero
-/// exit, or `Err` if spawning failed.
+/// exit, or `Err` on spawn failure or timeout.
 async fn do_run(
     state: &Arc<AppState>,
     prompt: &str,
     project_dir: &str,
     forge_binary: &str,
+    timeout_secs: u64,
 ) -> anyhow::Result<bool> {
     debug!(forge_binary, prompt, "Spawning forge subprocess");
 
@@ -140,13 +132,53 @@ async fn do_run(
         }
     });
 
-    let status = child.wait().await?;
+    // ── Wait for the subprocess with a hard deadline ──────────────────────
+    //
+    // `tokio::time::timeout` wraps `child.wait()`.  When the deadline fires
+    // the inner future is dropped (releasing the borrow on `child`) and we
+    // can immediately call `child.kill()`.
+    let wait_result = timeout(Duration::from_secs(timeout_secs), child.wait()).await;
 
-    // Wait for both reader tasks to drain their pipes fully.
-    stdout_task.await.ok();
-    stderr_task.await.ok();
+    match wait_result {
+        // ── Timeout ───────────────────────────────────────────────────────
+        Err(_elapsed) => {
+            // Announce timeout in the live stream.
+            let msg = format!("[agent2web] Run timed out after {timeout_secs}s — killing process");
+            {
+                let mut run = state.run.lock().expect("run mutex");
+                run.output_buf.push(msg.clone());
+            }
+            let _ = state.sse_tx.send(msg);
 
-    Ok(status.success())
+            // Kill the subprocess and wait for it to reap so no zombie is left.
+            if let Err(e) = child.kill().await {
+                warn!(error = %e, "Failed to send SIGKILL to timed-out forge process");
+            }
+            // Reap the process to release OS resources.
+            child.wait().await.ok();
+
+            // Drain the reader tasks (pipes are now closed; they exit quickly).
+            stdout_task.await.ok();
+            stderr_task.await.ok();
+
+            Err(anyhow::anyhow!("Timed out after {timeout_secs} seconds"))
+        }
+
+        // ── Subprocess error (spawn / I/O failure) ────────────────────────
+        Ok(Err(io_err)) => {
+            stdout_task.await.ok();
+            stderr_task.await.ok();
+            Err(io_err.into())
+        }
+
+        // ── Normal exit ───────────────────────────────────────────────────
+        Ok(Ok(status)) => {
+            // Wait for both reader tasks to drain their pipes fully.
+            stdout_task.await.ok();
+            stderr_task.await.ok();
+            Ok(status.success())
+        }
+    }
 }
 
 // ── Conversation state update ─────────────────────────────────────────────────

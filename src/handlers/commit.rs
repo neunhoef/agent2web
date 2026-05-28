@@ -19,7 +19,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use crate::{state::AppState, templates};
+use crate::{diff as git_diff, state::AppState, templates};
 
 // ── GET /commit ───────────────────────────────────────────────────────────────
 
@@ -285,6 +285,23 @@ pub async fn post_commit(
             .lock()
             .expect("prompts mutex poisoned");
         prompts.clear();
+    }
+
+    // Record the new commit in the in-memory history so the diff nav reflects
+    // it immediately without requiring a server restart.
+    let max_history = state.config.diff.max_history;
+    match git_diff::get_latest_commit(&project_dir).await {
+        Ok(commit) => {
+            let mut history = state
+                .commit_history
+                .lock()
+                .expect("commit_history mutex poisoned");
+            history.insert(0, commit);
+            history.truncate(max_history);
+        }
+        Err(e) => {
+            warn!(error = %e, "Could not read new commit SHA after git commit (non-fatal)");
+        }
     }
 
     Redirect::to("/").into_response()

@@ -40,15 +40,32 @@ async fn main() -> anyhow::Result<()> {
     let config = config::Config::load(&args.config)?;
 
     let bind_addr = config.server.bind.clone();
+    let project_dir = config.server.project_dir.clone();
+    let max_history = config.diff.max_history;
 
     info!(
         bind = %bind_addr,
-        project_dir = %config.server.project_dir,
+        project_dir = %project_dir,
         "Starting agent2web"
     );
 
     // Build shared state.
     let state = state::AppState::new(config);
+
+    // Populate recent commit history from git log so the diff history nav
+    // is populated immediately on first page load.
+    match diff::get_recent_commits(&project_dir, max_history).await {
+        Ok(commits) => {
+            let count = commits.len();
+            *state.commit_history.lock().expect("commit_history mutex") = commits;
+            info!(count, "Loaded initial commit history");
+        }
+        Err(e) => {
+            // Not fatal — project_dir may not be a git repository yet, or
+            // the repository may have no commits.
+            tracing::warn!(error = %e, "Could not load initial commit history (non-fatal)");
+        }
+    }
 
     // Build the axum router.
     let app = router::build(state);

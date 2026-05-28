@@ -98,8 +98,11 @@ pub async fn get_diff_range(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/// Render a lightweight "nothing to show" page for empty diffs.
+///
+/// Uses an info-styled notice (not an error) with a back link to the main page.
 fn empty_diff_page(msg: &str) -> Response {
-    (StatusCode::OK, Html(templates::render_error(200, msg))).into_response()
+    (StatusCode::OK, Html(templates::render_no_diff(msg))).into_response()
 }
 
 fn error_page(message: &str) -> Response {
