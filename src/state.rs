@@ -19,8 +19,8 @@ pub enum RunStatus {
     Idle,
     /// An agent run is currently executing.
     Running,
-    /// The run completed successfully. Holds the git commit SHA (if any).
-    Done { commit_sha: Option<String> },
+    /// The run completed successfully.
+    Done,
     /// The run failed or was killed. Holds a human-readable reason.
     Failed { reason: String },
 }
@@ -34,7 +34,7 @@ impl RunStatus {
         match self {
             RunStatus::Idle => "Idle",
             RunStatus::Running => "Running",
-            RunStatus::Done { .. } => "Done",
+            RunStatus::Done => "Done",
             RunStatus::Failed { .. } => "Failed",
         }
     }

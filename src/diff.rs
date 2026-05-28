@@ -19,6 +19,41 @@ pub struct DiffResult {
     pub is_empty: bool,
 }
 
+/// Render the working-tree diff (`git diff HEAD`) — all uncommitted changes.
+///
+/// This is the primary diff view after an agent run.
+///
+/// `context_lines` controls the `-U<n>` flag passed to `git diff`.
+pub async fn render_working_tree(project_dir: &str, context_lines: usize) -> Result<DiffResult> {
+    let context_flag = format!("-U{context_lines}");
+    run_diff(
+        project_dir,
+        &["diff", "--stat", "-p", &context_flag, "HEAD"],
+    )
+    .await
+}
+
+/// Render the diff introduced by a single commit (`<ref>~1..<ref>`).
+///
+/// `rev` defaults to `HEAD` if an empty string is passed, which shows the
+/// most recent commit.
+///
+/// `context_lines` controls the `-U<n>` flag passed to `git diff`.
+pub async fn render_single_commit(
+    project_dir: &str,
+    rev: &str,
+    context_lines: usize,
+) -> Result<DiffResult> {
+    validate_revision(rev)?;
+    let range = format!("{rev}~1..{rev}");
+    let context_flag = format!("-U{context_lines}");
+    run_diff(
+        project_dir,
+        &["diff", "--stat", "-p", &context_flag, &range],
+    )
+    .await
+}
+
 /// Render the diff introduced by the most recent commit (`HEAD~1..HEAD`).
 ///
 /// `context_lines` controls the `-U<n>` flag passed to `git diff`.

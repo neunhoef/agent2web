@@ -454,6 +454,116 @@ textarea:disabled {
   color: #a0c0f0;
 }
 
+/* ── Commit page: file selector ── */
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 0.9rem;
+}
+
+.file-row:hover { background: var(--surface2); }
+
+.file-row input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.file-status {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.35rem;
+  flex-shrink: 0;
+  min-width: 2rem;
+  text-align: center;
+}
+
+.file-path {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Subject input on commit page */
+input[type="text"] {
+  padding: 0.55rem 0.75rem;
+  min-height: 44px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.9rem;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Checkbox row (include-prompts) */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Prompt list on commit page */
+.prompt-list {
+  list-style: disc;
+  padding-left: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.prompt-item {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* h3 style within cards */
+.card-body h3 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
 /* ── Responsive: desktop 2-column ── */
 @media (min-width: 900px) {
   main {

@@ -68,24 +68,12 @@ pub struct ForgeConfig {
     /// Name or absolute path of the `forge` binary.
     #[serde(default = "defaults::forge_binary")]
     pub binary: String,
-
-    /// Command used to commit after a successful agent run.
-    /// Typically "forge commit" (AI-generated message) or
-    /// "git commit -m 'agent run'".
-    #[serde(default = "defaults::commit_cmd")]
-    pub commit_cmd: String,
-
-    /// If true, run `git push` after every successful commit.
-    #[serde(default)]
-    pub auto_push: bool,
 }
 
 impl Default for ForgeConfig {
     fn default() -> Self {
         Self {
             binary: defaults::forge_binary(),
-            commit_cmd: defaults::commit_cmd(),
-            auto_push: false,
         }
     }
 }
@@ -174,9 +162,6 @@ mod defaults {
     }
     pub fn forge_binary() -> String {
         "forge".to_string()
-    }
-    pub fn commit_cmd() -> String {
-        "forge commit".to_string()
     }
     pub fn stt_provider() -> String {
         "whisper_server".to_string()

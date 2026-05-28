@@ -1,8 +1,9 @@
 //! ForgeCode subprocess management.
 //!
 //! `spawn_agent_run` is the single public entry point: it spawns a tokio task
-//! that runs `forge -p "<prompt>"`, streams output lines to the SSE broadcast
-//! channel, and on success invokes the configured commit command.
+//! that runs `forge -p "<prompt>"` and streams output lines to the SSE broadcast
+//! channel.  The agent never commits automatically; the user initiates commits
+//! from the dedicated commit page.
 
 use std::sync::Arc;
 
@@ -26,8 +27,6 @@ async fn run_agent(state: Arc<AppState>, prompt: String) {
     let timeout_secs = state.config.server.run_timeout;
     let project_dir = state.config.server.project_dir.clone();
     let forge_binary = state.config.forge.binary.clone();
-    let commit_cmd = state.config.forge.commit_cmd.clone();
-    let auto_push = state.config.forge.auto_push;
 
     // Note whether this is the very first run (no active conversation yet).
     let is_first_run = state.conv.lock().expect("conv mutex").active_id.is_none();
@@ -69,10 +68,8 @@ async fn run_agent(state: Arc<AppState>, prompt: String) {
             update_conv_state(&state, &forge_binary, &prompt, is_first_run).await;
 
             if exit_success {
-                // Commit the working-tree changes produced by the agent.
-                let commit_sha = do_commit(&project_dir, &commit_cmd, auto_push).await;
                 let mut run = state.run.lock().expect("run mutex");
-                run.status = RunStatus::Done { commit_sha };
+                run.status = RunStatus::Done;
             } else {
                 let mut run = state.run.lock().expect("run mutex");
                 run.status = RunStatus::Failed {
@@ -150,90 +147,6 @@ async fn do_run(
     stderr_task.await.ok();
 
     Ok(status.success())
-}
-
-// ── Commit ───────────────────────────────────────────────────────────────────
-
-/// Run `git add -A` followed by the configured commit command.
-///
-/// Returns the new HEAD SHA on success, or `None` if nothing was committed or
-/// an error occurred.
-async fn do_commit(project_dir: &str, commit_cmd: &str, auto_push: bool) -> Option<String> {
-    debug!(commit_cmd, "Running git add -A");
-
-    let add = Command::new("git")
-        .current_dir(project_dir)
-        .args(["add", "-A"])
-        .output()
-        .await;
-
-    if let Err(e) = add {
-        warn!(error = %e, "git add -A failed");
-        return None;
-    }
-
-    // Split the commit_cmd string into binary + arguments.
-    let parts: Vec<&str> = commit_cmd.split_whitespace().collect();
-    if parts.is_empty() {
-        warn!("commit_cmd is empty — skipping commit");
-        return None;
-    }
-
-    debug!("Running commit command: {commit_cmd}");
-
-    let commit_out = Command::new(parts[0])
-        .current_dir(project_dir)
-        .args(&parts[1..])
-        .output()
-        .await;
-
-    match commit_out {
-        Err(e) => {
-            warn!(error = %e, "Commit command failed to execute");
-            None
-        }
-        Ok(out) if !out.status.success() => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            warn!(stderr = %stderr, "Commit command exited with non-zero status");
-            None
-        }
-        Ok(_) => {
-            // Resolve the new HEAD SHA.
-            let sha_out = Command::new("git")
-                .current_dir(project_dir)
-                .args(["rev-parse", "HEAD"])
-                .output()
-                .await
-                .ok()?;
-
-            let sha = String::from_utf8_lossy(&sha_out.stdout).trim().to_string();
-
-            if sha.is_empty() {
-                return None;
-            }
-
-            info!(sha = %sha, "Committed agent changes");
-
-            if auto_push {
-                debug!("auto_push enabled — running git push");
-                let push = Command::new("git")
-                    .current_dir(project_dir)
-                    .args(["push"])
-                    .output()
-                    .await;
-                if let Err(e) = push {
-                    warn!(error = %e, "git push failed");
-                } else if let Ok(out) = push
-                    && !out.status.success()
-                {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    warn!(stderr = %stderr, "git push exited with non-zero status");
-                }
-            }
-
-            Some(sha)
-        }
-    }
 }
 
 // ── Conversation state update ─────────────────────────────────────────────────

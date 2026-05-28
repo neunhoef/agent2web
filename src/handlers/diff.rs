@@ -1,6 +1,6 @@
-//! Handlers for `GET /diff` and `GET /diff/range`.
+//! Handlers for `GET /diff`, `GET /diff/commit`, and `GET /diff/range`.
 //!
-//! Both endpoints return the complete, self-contained HTML page that
+//! All three endpoints return the complete, self-contained HTML page that
 //! diff2html-cli generates (including its own CSS and styling).  The user
 //! navigates to the diff page and uses the browser's Back button to return
 //! to the main UI — no embedding or HTMX swapping needed.
@@ -19,16 +19,47 @@ use crate::{diff, state::AppState, templates};
 
 // ── GET /diff ─────────────────────────────────────────────────────────────
 
-/// `GET /diff` — render the diff of the most recent commit (`HEAD~1..HEAD`).
+/// `GET /diff` — render the working-tree diff (`git diff HEAD`), showing all
+/// uncommitted changes since the last commit.
 pub async fn get_diff(State(state): State<Arc<AppState>>) -> Response {
     let project_dir = &state.config.server.project_dir;
     let context_lines = state.config.diff.context_lines;
 
-    match diff::render_last_commit(project_dir, context_lines).await {
-        Ok(result) if result.is_empty => empty_diff_page(),
+    match diff::render_working_tree(project_dir, context_lines).await {
+        Ok(result) if result.is_empty => {
+            empty_diff_page("No uncommitted changes in the working tree.")
+        }
         Ok(result) => Html(result.html).into_response(),
         Err(e) => {
-            warn!(error = %e, "Failed to render diff");
+            warn!(error = %e, "Failed to render working-tree diff");
+            error_page(&e.to_string())
+        }
+    }
+}
+
+// ── GET /diff/commit ───────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DiffCommitQuery {
+    /// The commit ref to diff (defaults to `HEAD`).
+    pub r#ref: Option<String>,
+}
+
+/// `GET /diff/commit?ref=REF` — render the diff introduced by a single commit.
+/// Defaults to `HEAD` (the most recent commit) when `ref` is absent.
+pub async fn get_diff_commit(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<DiffCommitQuery>,
+) -> Response {
+    let project_dir = &state.config.server.project_dir;
+    let context_lines = state.config.diff.context_lines;
+    let rev = params.r#ref.as_deref().unwrap_or("HEAD");
+
+    match diff::render_single_commit(project_dir, rev, context_lines).await {
+        Ok(result) if result.is_empty => empty_diff_page("No changes in that commit."),
+        Ok(result) => Html(result.html).into_response(),
+        Err(e) => {
+            warn!(error = %e, "Failed to render single-commit diff");
             error_page(&e.to_string())
         }
     }
@@ -56,7 +87,7 @@ pub async fn get_diff_range(
     let to = params.to.as_deref().unwrap_or("HEAD");
 
     match diff::render_range(project_dir, from, to, context_lines).await {
-        Ok(result) if result.is_empty => empty_diff_page(),
+        Ok(result) if result.is_empty => empty_diff_page("No changes in the specified range."),
         Ok(result) => Html(result.html).into_response(),
         Err(e) => {
             warn!(error = %e, "Failed to render diff range");
@@ -67,15 +98,8 @@ pub async fn get_diff_range(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-fn empty_diff_page() -> Response {
-    (
-        StatusCode::OK,
-        Html(templates::render_error(
-            200,
-            "No changes — the repository has no previous commit or there is nothing to diff.",
-        )),
-    )
-        .into_response()
+fn empty_diff_page(msg: &str) -> Response {
+    (StatusCode::OK, Html(templates::render_error(200, msg))).into_response()
 }
 
 fn error_page(message: &str) -> Response {

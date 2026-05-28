@@ -9,6 +9,7 @@ const APP_JS: &str = include_str!("../static/app.js");
 /// The HTMX library — loaded from CDN for M1; later milestones may self-host.
 const HTMX_CDN: &str = "https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js";
 
+use crate::handlers::commit::ChangedFile;
 use crate::state::{ConvState, RunState, RunStatus};
 
 // ── Page shell ────────────────────────────────────────────────────────────
@@ -30,6 +31,17 @@ pub fn render_index(
     let run_status_badge = render_run_status_badge(&run.status);
     let output_section = render_output_section(run);
     let is_running = run.status.is_running();
+
+    // Prompts hint for the action section.
+    let prompts_hint = if prompts_count == 0 {
+        "No prompts accumulated yet.".to_string()
+    } else {
+        format!(
+            "{} prompt{} accumulated since the last commit.",
+            prompts_count,
+            if prompts_count == 1 { "" } else { "s" }
+        )
+    };
 
     format!(
         r#"<!DOCTYPE html>
@@ -107,52 +119,31 @@ pub fn render_index(
     <!-- ── Agent output section ── -->
     {output_section}
 
-    <!-- ── Manual commit section ── -->
+    <!-- ── Action links ── -->
     <div class="card">
       <div class="card-header">
-        <h2>Commit</h2>
+        <h2>Actions</h2>
       </div>
       <div class="card-body">
-        <form method="POST" action="/commit">
-          <div class="commit-row">
-            <input
-              type="text"
-              name="message"
-              placeholder="Commit subject line…"
-              {commit_disabled}
-            />
-            <button type="submit" class="btn btn-success" {commit_disabled}>
-              &#x2714; Commit
-            </button>
-          </div>
-          <p class="commit-hint">
-            {prompts_hint}
-          </p>
-        </form>
+        <p class="commit-hint">{prompts_hint}</p>
+        <div class="diff-controls">
+          <a href="/diff" class="btn btn-secondary">
+            &#x1F50D; View Working-Tree Diff
+          </a>
+          <a href="/commit" class="btn btn-success">
+            &#x2714; Review &amp; Commit
+          </a>
+        </div>
+        <p class="commit-hint" style="margin-top:0.75rem;font-size:0.8rem">
+          Past commits: <a href="/diff/commit" style="color:var(--accent)">HEAD</a>
+          &nbsp;|&nbsp;
+          <a href="/diff/range?from=HEAD~3&amp;to=HEAD" style="color:var(--accent)">HEAD~3..HEAD</a>
+        </p>
       </div>
     </div>
 
   </div><!-- .col-left -->
 
-  <div class="col-right">
-
-    <!-- ── Diff section ── -->
-    <div class="card">
-      <div class="card-header">
-        <h2>Diff</h2>
-      </div>
-      <div class="card-body">
-        <p class="commit-hint" style="margin-bottom:0.75rem">
-          Opens in a new page — use &#x2190; Back to return here.
-        </p>
-        <div class="diff-controls">
-          <a href="/diff" class="btn btn-secondary btn-sm">HEAD~1</a>
-          <a href="/diff/range?from=HEAD~3&amp;to=HEAD" class="btn btn-secondary btn-sm">HEAD~3..HEAD</a>
-        </div>
-      </div>
-    </div>
-
-  </div><!-- .col-right -->
 </main>
 
 <script>{APP_JS}</script>
@@ -171,15 +162,160 @@ pub fn render_index(
             ""
         },
         disabled = if is_running { "disabled" } else { "" },
-        commit_disabled = if is_running { "disabled" } else { "" },
-        prompts_hint = if prompts_count == 0 {
-            "No prompts accumulated yet.".to_string()
+        prompts_hint = prompts_hint,
+    )
+}
+
+// ── Commit page ────────────────────────────────────────────────────────────
+
+/// Render the full commit page with file selector, subject input, and prompt
+/// preview.
+pub fn render_commit_page(
+    files: &[ChangedFile],
+    prompts: &[String],
+    password_enabled: bool,
+) -> String {
+    let file_rows: String = if files.is_empty() {
+        r#"<p class="commit-hint">No changed files in the working tree.</p>"#.to_string()
+    } else {
+        files
+            .iter()
+            .map(|f| {
+                format!(
+                    r#"<label class="file-row">
+            <input type="checkbox" name="files" value="{path}" checked />
+            <code class="file-status">{status}</code>
+            <span class="file-path">{path_display}</span>
+          </label>"#,
+                    path = html_escape(&f.path),
+                    status = html_escape(f.status.trim()),
+                    path_display = html_escape(&f.path),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let prompts_section = if prompts.is_empty() {
+        r#"<p class="commit-hint" style="color:var(--text-muted)">
+            No prompts accumulated since the last commit.
+          </p>"#
+            .to_string()
+    } else {
+        let prompt_items: String = prompts
+            .iter()
+            .map(|p| format!(r#"<li class="prompt-item">{}</li>"#, html_escape(p)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(r#"<ul class="prompt-list">{prompt_items}</ul>"#)
+    };
+
+    let commit_button = if files.is_empty() {
+        String::new()
+    } else {
+        r#"<button type="submit" class="btn btn-success">&#x2714; Commit Selected Files</button>"#
+            .to_string()
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Commit — agent2web</title>
+  <style>{STYLE_CSS}</style>
+</head>
+<body>
+
+<header>
+  <h1>agent2web</h1>
+  <div class="header-spacer"></div>
+  {password_field}
+</header>
+
+<main>
+  <div class="col-left">
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Commit Changes</h2>
+        <div style="flex:1"></div>
+        <a href="/" class="btn btn-secondary btn-sm">&#x2190; Back to Home</a>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="/commit">
+          {password_hidden}
+
+          <!-- File selector -->
+          <h3 style="margin-bottom:0.5rem">Changed files (select to include):</h3>
+          <div class="file-list">
+            {file_rows}
+          </div>
+
+          <!-- Subject line -->
+          <div style="margin-top:1.25rem">
+            <label for="commit-subject" style="display:block;margin-bottom:0.25rem;font-weight:600">
+              Subject:
+            </label>
+            <input
+              type="text"
+              id="commit-subject"
+              name="message"
+              placeholder="Commit subject line…"
+              style="width:100%;box-sizing:border-box"
+              {required}
+            />
+          </div>
+
+          <!-- Include-prompts checkbox -->
+          <div style="margin-top:1rem">
+            <label class="checkbox-row">
+              <input type="checkbox" name="include_prompts" value="on" checked />
+              <span>Append accumulated prompts to commit body</span>
+            </label>
+          </div>
+
+          <!-- Prompt preview -->
+          <div style="margin-top:1rem">
+            <h3 style="margin-bottom:0.5rem">
+              Prompts since last commit ({prompt_count}):
+            </h3>
+            {prompts_section}
+          </div>
+
+          <!-- Action buttons -->
+          <div class="diff-controls" style="margin-top:1.25rem">
+            {commit_button}
+            <a href="/diff" class="btn btn-secondary">&#x1F50D; View Diff</a>
+          </div>
+
+        </form>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+</body>
+</html>"#,
+        file_rows = file_rows,
+        prompts_section = prompts_section,
+        commit_button = commit_button,
+        prompt_count = prompts.len(),
+        required = if files.is_empty() { "" } else { "required" },
+        password_field = if password_enabled {
+            r#"<div class="password-group">
+          <label for="password">Password:</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" />
+        </div>"#
         } else {
-            format!(
-                "{} prompt{} will be appended to the commit body.",
-                prompts_count,
-                if prompts_count == 1 { "" } else { "s" }
-            )
+            ""
+        },
+        password_hidden = if password_enabled {
+            r#"<input type="hidden" name="password" id="commit-password" />"#
+        } else {
+            ""
         },
     )
 }
@@ -238,7 +374,7 @@ fn render_run_status_badge(status: &RunStatus) -> String {
     let (class, icon, text) = match status {
         RunStatus::Idle => ("status-idle", "○", "Idle"),
         RunStatus::Running => ("status-running", "●", "Running"),
-        RunStatus::Done { .. } => ("status-done", "✔", "Done"),
+        RunStatus::Done => ("status-done", "✔", "Done"),
         RunStatus::Failed { .. } => ("status-failed", "✖", "Failed"),
     };
     format!(r#"<span class="status-badge {class}">{icon} {text}</span>"#,)
@@ -280,29 +416,18 @@ fn render_output_section(run: &RunState) -> String {
         ""
     };
 
-    // Show a "Failed" alert if the last run failed.
-    let failure_alert = match &run.status {
+    // Show a status alert based on last run result.
+    let status_alert = match &run.status {
         RunStatus::Failed { reason } => format!(
             r#"<div class="alert alert-error" style="margin-bottom:0.75rem">
           Run failed: {}
         </div>"#,
             html_escape(reason)
         ),
-        RunStatus::Done { commit_sha } => {
-            if let Some(sha) = commit_sha {
-                format!(
-                    r#"<div class="alert alert-info" style="margin-bottom:0.75rem">
-          Run complete — commit <code>{}</code>.
-        </div>"#,
-                    html_escape(&sha[..sha.len().min(12)])
-                )
-            } else {
-                r#"<div class="alert alert-info" style="margin-bottom:0.75rem">
-          Run complete (no new commit).
+        RunStatus::Done => r#"<div class="alert alert-info" style="margin-bottom:0.75rem">
+          Run complete — review the diff and commit when ready.
         </div>"#
-                    .to_string()
-            }
-        }
+            .to_string(),
         _ => String::new(),
     };
 
@@ -312,7 +437,7 @@ fn render_output_section(run: &RunState) -> String {
         <h2>Agent Output</h2>
       </div>
       <div class="card-body">
-        {failure_alert}
+        {status_alert}
         <div class="output-box" id="agent-output"{sse_attr}>{output_inner}</div>
       </div>
     </div>"#,

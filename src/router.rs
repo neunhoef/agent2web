@@ -18,9 +18,13 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/stream", get(handlers::stream::get_stream))
         // ── Diff views ────────────────────────────────────────────────────
         .route("/diff", get(handlers::diff::get_diff))
+        .route("/diff/commit", get(handlers::diff::get_diff_commit))
         .route("/diff/range", get(handlers::diff::get_diff_range))
-        // ── Manual commit ─────────────────────────────────────────────────
-        .route("/commit", post(handlers::commit::post_commit))
+        // ── Commit page & action ──────────────────────────────────────────
+        .route(
+            "/commit",
+            get(handlers::commit::get_commit).post(handlers::commit::post_commit),
+        )
         // ── Conversation management ───────────────────────────────────────
         .route(
             "/conversation/new",
