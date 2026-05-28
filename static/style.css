@@ -395,6 +395,45 @@ textarea:disabled {
 .diff-container .d2h-ins { background: #1a3a2a; }
 .diff-container .d2h-del { background: #3a1a1a; }
 
+/* ── New conversation inline form ── */
+
+details.conv-new-details {
+  display: inline-block;
+  position: relative;
+}
+
+/* Hide the native disclosure triangle */
+details.conv-new-details > summary {
+  list-style: none;
+}
+details.conv-new-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.conv-new-form {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  min-width: 22rem;
+  z-index: 200;
+  box-shadow: var(--shadow);
+}
+
+.conv-new-form input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.85rem;
+}
+
 /* ── Conversation history panel ── */
 .conv-history {
   border-top: 1px solid var(--border);

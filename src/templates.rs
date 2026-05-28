@@ -9,6 +9,8 @@ const APP_JS: &str = include_str!("../static/app.js");
 /// The HTMX library — loaded from CDN for M1; later milestones may self-host.
 const HTMX_CDN: &str = "https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js";
 
+use std::time::SystemTime;
+
 use crate::handlers::commit::ChangedFile;
 use crate::state::{ConvState, RunState, RunStatus};
 
@@ -351,9 +353,18 @@ fn render_conv_bar(conv: &ConvState) -> String {
         r##"<div class="conv-bar">
     {active_info}
     <div class="conv-bar-spacer"></div>
-    <form method="POST" action="/conversation/new" style="display:inline">
-      <button type="submit" class="btn btn-secondary btn-sm">&#x2295; New Conversation</button>
-    </form>
+    <details class="conv-new-details">
+      <summary class="btn btn-secondary btn-sm">&#x2295; New Conversation</summary>
+      <form method="POST" action="/conversation/new" class="conv-new-form">
+        <input
+          type="text"
+          name="label"
+          placeholder="Label (optional)&hellip;"
+          autocomplete="off"
+        />
+        <button type="submit" class="btn btn-primary btn-sm">&#x2714;&nbsp;Create</button>
+      </form>
+    </details>
     <button
       class="btn btn-secondary btn-sm"
       hx-get="/conversation/list"
@@ -469,7 +480,7 @@ pub fn render_conv_list(conv: &ConvState) -> String {
                 r#"<div class="conv-entry">
           <span class="conv-entry-id">{id}</span>
           <span class="conv-entry-label">{label}{active}</span>
-          <span class="conv-entry-meta">{runs} run{s}</span>
+          <span class="conv-entry-meta">{runs} run{s} &middot; {started}</span>
           <form method="POST" action="/conversation/resume" style="display:inline">
             <input type="hidden" name="id" value="{full_id}" />
             <button type="submit" class="btn btn-secondary btn-sm">Resume</button>
@@ -484,6 +495,7 @@ pub fn render_conv_list(conv: &ConvState) -> String {
                 active = active_marker,
                 runs = e.run_count,
                 s = if e.run_count == 1 { "" } else { "s" },
+                started = format_elapsed(e.started_at),
                 full_id = html_escape(&e.id),
             )
         })
@@ -538,4 +550,24 @@ pub fn html_escape(s: &str) -> String {
 pub fn truncate(s: &str, max: usize) -> &str {
     // Byte-based truncation at a char boundary (simple approximation).
     if s.len() <= max { s } else { &s[..max] }
+}
+
+/// Format a `SystemTime` as a human-readable relative age string,
+/// e.g. "just now", "5m ago", "3h ago", "2d ago".
+fn format_elapsed(t: SystemTime) -> String {
+    match t.elapsed() {
+        Ok(d) => {
+            let secs = d.as_secs();
+            if secs < 60 {
+                "just now".to_string()
+            } else if secs < 3_600 {
+                format!("{}m ago", secs / 60)
+            } else if secs < 86_400 {
+                format!("{}h ago", secs / 3_600)
+            } else {
+                format!("{}d ago", secs / 86_400)
+            }
+        }
+        Err(_) => "unknown".to_string(),
+    }
 }
