@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod commit;
 pub mod conversation;
 pub mod diff;

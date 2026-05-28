@@ -4,6 +4,7 @@ use std::time::SystemTime;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
+use crate::stt::SttProvider;
 
 /// Capacity of the SSE broadcast ring-buffer (messages).
 /// Subscribers that fall more than this many messages behind will receive a
@@ -133,17 +134,21 @@ pub struct AppState {
     /// per output line, plus `"__DONE__"` when the run ends. SSE subscribers
     /// forward messages to browser clients.
     pub sse_tx: broadcast::Sender<String>,
+    /// Configured speech-to-text provider (built once at startup).
+    pub stt: Arc<dyn SttProvider>,
 }
 
 impl AppState {
     pub fn new(config: Config) -> Arc<Self> {
         let (sse_tx, _) = broadcast::channel(SSE_CHANNEL_CAPACITY);
+        let stt = crate::stt::build_provider(&config.stt);
         Arc::new(Self {
             run: Mutex::new(RunState::default()),
             conv: Mutex::new(ConvState::default()),
             prompts_since_commit: Mutex::new(Vec::new()),
             config,
             sse_tx,
+            stt,
         })
     }
 }

@@ -9,6 +9,7 @@ mod diff;
 mod handlers;
 mod router;
 mod state;
+mod stt;
 mod templates;
 
 use clap::Parser;
