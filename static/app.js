@@ -75,25 +75,26 @@
         : 'audio/webm';
 
       mediaRecorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
 
-      mediaRecorder.onstop = async () => {
-        // Stop all tracks to release microphone indicator
+      // Without a timeslice, ondataavailable fires exactly once when stop()
+      // is called, delivering all buffered audio in a single event.  This
+      // avoids the race condition where the stop event fires before the last
+      // timeslice chunk is delivered in some browsers.
+      mediaRecorder.ondataavailable = async (e) => {
+        // Release the microphone as soon as data is available.
         stream.getTracks().forEach(t => t.stop());
         stream = null;
 
-        const blob = new Blob(chunks, { type: mimeType });
+        document.body.classList.remove('recording');
 
-        // Guard: if no audio data was captured (e.g. recording was too short),
-        // show a message instead of uploading an empty blob.
-        if (blob.size === 0) {
+        if (!e.data || e.data.size === 0) {
           setStatus('Recording was empty — please try again.', true);
           recordBtn.disabled = false;
           stopBtn.disabled = true;
-          document.body.classList.remove('recording');
           return;
         }
 
+        const blob = new Blob([e.data], { type: mimeType });
         const form = new FormData();
         form.append('audio', blob, 'recording.webm');
 
@@ -121,16 +122,13 @@
         } catch (err) {
           setStatus('Upload failed: ' + err.message, true);
         } finally {
-          // Re-enable prompt area (send button is controlled by run state).
           promptArea.disabled = false;
           if (sendBtn) sendBtn.disabled = false;
           recordBtn.disabled = false;
         }
-
-        document.body.classList.remove('recording');
       };
 
-      mediaRecorder.start(500); // collect chunks every 500 ms
+      mediaRecorder.start(); // no timeslice — all data delivered in one ondataavailable
       document.body.classList.add('recording');
       recordBtn.disabled = true;
       stopBtn.disabled = false;
@@ -142,7 +140,7 @@
 
   stopBtn.addEventListener('click', () => {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.stop();
+      mediaRecorder.stop(); // triggers ondataavailable then stop event
       setStatus('Processing…');
     }
   });
