@@ -174,9 +174,10 @@ pub async fn post_commit(
         let prompts = state
             .prompts_since_commit
             .lock()
-            .expect("prompts mutex poisoned");
+            .expect("prompts mutex poisoned")
+            .clone();
         if include_prompts {
-            build_commit_message(&subject, &prompts)
+            build_commit_message(&subject, &prompts).await
         } else {
             subject.clone()
         }
@@ -330,18 +331,67 @@ pub async fn list_changed_files(project_dir: &str) -> anyhow::Result<Vec<Changed
 }
 
 /// Build the full commit message from a subject line and accumulated prompts.
-/// The prompt body is piped through `par 72` for line-wrapping if available.
-fn build_commit_message(subject: &str, prompts: &[String]) -> String {
+///
+/// The prompt body is piped through `par 72` for line-wrapping to 72 columns.
+/// If `par` is not installed or fails the body is included without reflowing.
+async fn build_commit_message(subject: &str, prompts: &[String]) -> String {
     if prompts.is_empty() {
         return subject.to_string();
     }
-    let mut msg = format!("{subject}\n\nPrompts since last commit:\n\n");
-    for (i, p) in prompts.iter().enumerate() {
-        if i > 0 {
-            msg.push('\n');
+
+    // Join all prompts with a blank line between each, as the raw body to reflow.
+    let raw_body = prompts.join("\n\n");
+
+    // Attempt to reflow through `par 72`.
+    let reflowed_body = reflow_with_par(&raw_body).await;
+
+    format!("{subject}\n\nPrompts since last commit:\n\n{reflowed_body}")
+}
+
+/// Pipe `text` through `par 72` and return the reflowed output.
+/// Falls back to the original text if `par` is not available or exits non-zero.
+async fn reflow_with_par(text: &str) -> String {
+    use tokio::io::AsyncWriteExt as _;
+
+    let child = Command::new("par")
+        .arg("72")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            debug!(error = %e, "par not available; using plain commit body");
+            return text.to_string();
         }
-        msg.push_str(p);
-        msg.push('\n');
+    };
+
+    // Write stdin concurrently with reading stdout to avoid pipe-buffer deadlock.
+    let input = text.as_bytes().to_vec();
+    let mut stdin_handle = child.stdin.take();
+    let write_task: tokio::task::JoinHandle<std::io::Result<()>> = tokio::spawn(async move {
+        if let Some(ref mut stdin) = stdin_handle {
+            stdin.write_all(&input).await?;
+        }
+        Ok(()) // drop closes stdin → signals EOF to par
+    });
+
+    let output = match child.wait_with_output().await {
+        Ok(o) => o,
+        Err(e) => {
+            debug!(error = %e, "par wait failed; using plain commit body");
+            return text.to_string();
+        }
+    };
+
+    let _ = write_task.await; // ignore stdin write errors
+
+    if output.status.success() && !output.stdout.is_empty() {
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    } else {
+        debug!("par exited non-zero or produced no output; using plain commit body");
+        text.to_string()
     }
-    msg
 }
