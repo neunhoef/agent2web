@@ -108,17 +108,17 @@ fn parse_commit_form(body: &[u8]) -> Option<CommitForm> {
 }
 
 /// `POST /commit` — stage selected files and commit with the supplied subject.
-pub async fn post_commit(
-    State(state): State<Arc<AppState>>,
-    body: Bytes,
-) -> Response {
+pub async fn post_commit(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     // ── Parse form body ───────────────────────────────────────────────────
     let form = match parse_commit_form(&body) {
         Some(f) => f,
         None => {
             return (
                 StatusCode::BAD_REQUEST,
-                Html(templates::render_error(400, "Missing required field: message")),
+                Html(templates::render_error(
+                    400,
+                    "Missing required field: message",
+                )),
             )
                 .into_response();
         }

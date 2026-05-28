@@ -109,11 +109,12 @@ async fn do_run(
         let mut lines = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             debug!("[forge stdout] {}", line);
+            let clean = clean_line(&line);
             {
                 let mut run = state_stdout.run.lock().expect("run mutex");
-                run.output_buf.push(line.clone());
+                run.output_buf.push(clean.clone());
             }
-            let _ = state_stdout.sse_tx.send(line);
+            let _ = state_stdout.sse_tx.send(clean);
         }
     });
 
@@ -123,7 +124,7 @@ async fn do_run(
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             debug!("[forge stderr] {}", line);
-            let formatted = format!("[stderr] {line}");
+            let formatted = format!("[stderr] {}", clean_line(&line));
             {
                 let mut run = state_stderr.run.lock().expect("run mutex");
                 run.output_buf.push(formatted.clone());
@@ -273,6 +274,92 @@ pub async fn create_new_conversation(forge_binary: &str) -> anyhow::Result<Strin
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Remove ANSI escape sequences from `s`.
+///
+/// Handles the most common sequence families:
+/// - CSI sequences: `ESC [` followed by parameter bytes and a final byte
+/// - OSC sequences: `ESC ]` terminated by BEL (`\x07`) or `ESC \`
+/// - Two-character sequences: `ESC` followed by any other single byte
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            result.push(c);
+            continue;
+        }
+        match chars.peek().copied() {
+            Some('[') => {
+                // CSI: ESC [ <params> <final-byte>
+                chars.next(); // consume '['
+                for ch in chars.by_ref() {
+                    if ch.is_ascii_alphabetic() {
+                        break; // final byte consumed
+                    }
+                }
+            }
+            Some(']') => {
+                // OSC: ESC ] <text> ST   (ST = BEL or ESC \)
+                chars.next(); // consume ']'
+                while let Some(ch) = chars.next() {
+                    if ch == '\x07' {
+                        break; // BEL string terminator
+                    }
+                    if ch == '\x1b' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next(); // consume '\'
+                        }
+                        break;
+                    }
+                }
+            }
+            Some(_) => {
+                // Any other two-character escape sequence — skip the second byte.
+                chars.next();
+            }
+            None => {} // bare ESC at end of string — drop it
+        }
+    }
+
+    result
+}
+
+/// Strip ANSI codes and simulate carriage-return overwriting.
+///
+/// A terminal renders `\r` by moving the cursor back to column 0 of the
+/// current line, allowing subsequent characters to overwrite what was there.
+/// `BufReader::lines()` splits only on `\n`, so a single "line" may contain
+/// multiple `\r`-separated segments representing incremental progress updates.
+/// This function collapses those into the final visible state of the line.
+fn clean_line(line: &str) -> String {
+    let s = strip_ansi(line);
+
+    if !s.contains('\r') {
+        return s;
+    }
+
+    // Simulate the cursor moving back to column 0 on each \r.
+    let mut buf: Vec<char> = Vec::new();
+    let mut col = 0usize;
+
+    for part in s.split('\r') {
+        let part_chars: Vec<char> = part.chars().collect();
+        let end = col + part_chars.len();
+        if end > buf.len() {
+            buf.resize(end, ' ');
+        }
+        for (i, &ch) in part_chars.iter().enumerate() {
+            buf[col + i] = ch;
+        }
+        col = 0; // \r → back to column 0
+    }
+
+    // Trim trailing spaces that may have been left by shorter overwrite segments.
+    let result: String = buf.iter().collect();
+    result.trim_end().to_string()
+}
 
 /// Truncate a prompt to a reasonable label length for display.
 fn truncate_label(prompt: &str) -> String {
