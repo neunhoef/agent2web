@@ -353,9 +353,14 @@ fn render_conv_bar(conv: &ConvState) -> String {
         r##"<div class="conv-bar">
     {active_info}
     <div class="conv-bar-spacer"></div>
-    <details class="conv-new-details">
-      <summary class="btn btn-secondary btn-sm">&#x2295; New Conversation</summary>
-      <form method="POST" action="/conversation/new" class="conv-new-form">
+    <span class="conv-new-wrap">
+    <button
+      class="btn btn-secondary btn-sm"
+      id="btn-new-conv"
+      type="button"
+    >&#x2295; New Conversation</button>
+    <div id="new-conv-form" class="conv-new-form" hidden>
+      <form method="POST" action="/conversation/new">
         <input
           type="text"
           name="label"
@@ -363,8 +368,10 @@ fn render_conv_bar(conv: &ConvState) -> String {
           autocomplete="off"
         />
         <button type="submit" class="btn btn-primary btn-sm">&#x2714;&nbsp;Create</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('new-conv-form').hidden=true">&#x2715;</button>
       </form>
-    </details>
+    </div>
+    </span>
     <button
       class="btn btn-secondary btn-sm"
       hx-get="/conversation/list"

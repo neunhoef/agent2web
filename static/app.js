@@ -1,10 +1,11 @@
 /* agent2web — client-side JavaScript
  *
- * Four functional areas:
+ * Five functional areas:
  *   1. Password field: persist in sessionStorage, inject into every form.
  *   2. Audio capture: MediaRecorder → POST /audio → populate transcript textarea.
  *   3. Auto-scroll: MutationObserver on the agent output div.
  *   4. SSE live output: EventSource on /stream when a run is in progress.
+ *   5. New-conversation form toggle: show/hide the inline label form.
  *
  * Total budget: ≤ 300 lines.
  */
@@ -176,4 +177,28 @@
     // Connection lost — close and let the page reload handle it.
     source.close();
   };
+})();
+
+// ── 5. New-conversation form toggle ─────────────────────────────────────────
+
+(function () {
+  const btn = document.getElementById('btn-new-conv');
+  const panel = document.getElementById('new-conv-form');
+  if (!btn || !panel) return;
+
+  btn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) {
+      const input = panel.querySelector('input[name="label"]');
+      if (input) input.focus();
+    }
+  });
+
+  // Close the panel when clicking outside of it.
+  document.addEventListener('click', function (e) {
+    if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) {
+      panel.hidden = true;
+    }
+  });
 })();

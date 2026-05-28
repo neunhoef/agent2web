@@ -397,17 +397,10 @@ textarea:disabled {
 
 /* ── New conversation inline form ── */
 
-details.conv-new-details {
-  display: inline-block;
+.conv-new-wrap {
   position: relative;
-}
-
-/* Hide the native disclosure triangle */
-details.conv-new-details > summary {
-  list-style: none;
-}
-details.conv-new-details > summary::-webkit-details-marker {
-  display: none;
+  display: inline-flex;
+  align-items: center;
 }
 
 .conv-new-form {
@@ -424,6 +417,13 @@ details.conv-new-details > summary::-webkit-details-marker {
   min-width: 22rem;
   z-index: 200;
   box-shadow: var(--shadow);
+}
+
+.conv-new-form form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
 }
 
 .conv-new-form input[type="text"] {
