@@ -188,7 +188,6 @@
     span.className = 'output-line' + (isStderr ? ' stderr' : '');
     span.textContent = data;
     outputBox.appendChild(span);
-    outputBox.appendChild(document.createTextNode('\n'));
   };
 
   source.onerror = function () {

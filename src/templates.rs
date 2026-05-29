@@ -483,7 +483,7 @@ fn render_output_section(run: &RunState) -> String {
                 format!(r#"<span class="{class}">{}</span>"#, html_escape(line))
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("")
     };
 
     // When Running, tell the JS to attach an SSE listener to this element.
