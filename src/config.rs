@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::path::Path;
 
 /// Top-level configuration, deserialized from agent2web.toml.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -45,7 +45,11 @@ impl Default for ServerConfig {
             project_dir: defaults::project_dir(),
             run_timeout: defaults::run_timeout(),
             password: String::new(),
-            tls: None,
+            tls: Some(TlsConfig {
+                enabled: true,
+                cert: defaults::tls_cert(),
+                key: defaults::tls_key(),
+            }),
         }
     }
 }
@@ -210,6 +214,14 @@ mod defaults {
     pub fn context_lines() -> usize {
         5
     }
+    pub fn tls_cert() -> String {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        format!("{home}/.tls/cert.pem")
+    }
+    pub fn tls_key() -> String {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        format!("{home}/.tls/key.pem")
+    }
 }
 
 impl Config {
@@ -235,14 +247,25 @@ impl Config {
             }
         }
 
-        // Environment variable overrides for secrets.
+        config.apply_env_overrides();
+        Ok(config)
+    }
+
+    /// Build a default configuration (no config file) and apply environment
+    /// variable overrides for secrets.
+    pub fn load_defaults() -> Self {
+        let mut config = Self::default();
+        config.apply_env_overrides();
+        config
+    }
+
+    /// Apply environment variable overrides for secrets.
+    fn apply_env_overrides(&mut self) {
         if let Ok(pwd) = std::env::var("AGENT2WEB_PASSWORD") {
-            config.server.password = pwd;
+            self.server.password = pwd;
         }
         if let Ok(key) = std::env::var("AGENT2WEB_STT_API_KEY") {
-            config.stt.api_key = key;
+            self.stt.api_key = key;
         }
-
-        Ok(config)
     }
 }

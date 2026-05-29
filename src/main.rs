@@ -21,8 +21,10 @@ use tracing::info;
 #[command(version, about)]
 struct Args {
     /// Path to the TOML configuration file.
-    #[arg(short, long, default_value = "agent2web.toml")]
-    config: String,
+    /// When omitted the program runs with built-in defaults (TLS enabled,
+    /// certificate and key at ~/.tls/cert.pem and ~/.tls/key.pem).
+    #[arg(short, long)]
+    config: Option<String>,
 }
 
 #[tokio::main]
@@ -37,8 +39,16 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    info!(config = %args.config, "Loading configuration");
-    let config = config::Config::load(&args.config)?;
+    let config = match args.config {
+        Some(ref path) => {
+            info!(config = %path, "Loading configuration from file");
+            config::Config::load(path)?
+        }
+        None => {
+            info!("No configuration file specified, using built-in defaults");
+            config::Config::load_defaults()
+        }
+    };
 
     let bind_addr = config.server.bind.clone();
     let project_dir = config.server.project_dir.clone();
