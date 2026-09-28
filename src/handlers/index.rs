@@ -19,6 +19,7 @@ pub async fn get_index(State(state): State<Arc<AppState>>) -> Html<String> {
 
     let password_enabled = !state.config.server.password.is_empty();
     let project_dir = &state.config.server.project_dir;
+    let run_timeout_secs = state.run_timeout();
 
     let html = templates::render_index(
         &run,
@@ -27,6 +28,7 @@ pub async fn get_index(State(state): State<Arc<AppState>>) -> Html<String> {
         password_enabled,
         prompts.len(),
         &commit_history,
+        run_timeout_secs,
     );
 
     Html(html)

@@ -529,8 +529,10 @@ active returns `409 Conflict` with a human-readable error page.
 
 ### 6.2 Timeouts
 
-A configurable `run_timeout` (default: 600 seconds) kills the subprocess
-if it exceeds the limit and transitions the run to `Failed(timeout)`.
+A configurable `run_timeout` (default: 3600 seconds, i.e. one hour) kills
+the subprocess if it exceeds the limit and transitions the run to
+`Failed(timeout)`.  The effective value can be changed at runtime from the
+web UI (Settings card); each run reads it at spawn time.
 
 ---
 
@@ -892,7 +894,7 @@ beyond `--config <path>`.
 [server]
 bind         = "0.0.0.0:8080"
 project_dir  = "/home/user/myproject"   # the git repo ForgeCode operates on
-run_timeout  = 600                      # seconds
+run_timeout  = 3600                     # seconds (1 hour default);
 password     = ""                       # shared password for all action endpoints;
                                         # leave empty to disable auth entirely.
                                         # Override with AGENT2WEB_PASSWORD env var.

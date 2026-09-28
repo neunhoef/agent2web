@@ -16,6 +16,11 @@ pub fn build(state: Arc<AppState>) -> Router {
         // ── Agent run & live stream ───────────────────────────────────────
         .route("/run", post(handlers::run::post_run))
         .route("/stream", get(handlers::stream::get_stream))
+        // ── Runtime settings ──────────────────────────────────────────────
+        .route(
+            "/settings/run-timeout",
+            post(handlers::settings::post_run_timeout),
+        )
         // ── Speech-to-text ────────────────────────────────────────────────
         .route("/audio", post(handlers::audio::post_audio))
         // ── Diff views ────────────────────────────────────────────────────

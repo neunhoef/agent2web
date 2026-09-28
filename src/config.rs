@@ -25,6 +25,9 @@ pub struct ServerConfig {
     pub project_dir: String,
 
     /// Maximum seconds a `forge` run may run before being killed.
+    /// Default: 3600 (1 hour).  Can be changed at runtime from the web UI
+    /// (Settings card on the main page); the config value is the initial
+    /// default applied at startup.
     #[serde(default = "defaults::run_timeout")]
     pub run_timeout: u64,
 
@@ -185,7 +188,7 @@ mod defaults {
         ".".to_string()
     }
     pub fn run_timeout() -> u64 {
-        600
+        3600
     }
     pub fn forge_binary() -> String {
         "forge".to_string()

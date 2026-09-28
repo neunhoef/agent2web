@@ -111,7 +111,7 @@ mod tests {
         ServerConfig {
             bind: "0.0.0.0:8080".into(),
             project_dir: ".".into(),
-            run_timeout: 600,
+            run_timeout: 3600,
             password: password.to_string(),
             tls: None,
         }

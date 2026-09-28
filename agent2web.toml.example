@@ -9,7 +9,8 @@ bind         = "0.0.0.0:8080"
 project_dir  = "/home/user/myproject"
 
 # Maximum seconds a forge run may run before being killed.
-run_timeout  = 600
+# Default: 3600 (1 hour). Can also be changed at runtime from the web UI.
+run_timeout  = 3600
 
 # Shared password for all mutating endpoints (POST /run, POST /audio, etc.).
 # Leave empty to disable authentication entirely.

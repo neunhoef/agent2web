@@ -24,6 +24,7 @@ pub fn render_index(
     password_enabled: bool,
     prompts_count: usize,
     commit_history: &[CommitSummary],
+    run_timeout_secs: u64,
 ) -> String {
     let project_name = std::path::Path::new(project_dir)
         .file_name()
@@ -36,6 +37,7 @@ pub fn render_index(
     let output_section = render_output_section(run);
     let is_running = run.status.is_running();
     let recent_commits_section = render_recent_commits(commit_history);
+    let settings_section = render_settings_section(run_timeout_secs);
 
     // Prompts hint for the action section.
     let prompts_hint = if prompts_count == 0 {
@@ -148,6 +150,9 @@ pub fn render_index(
       </div>
     </div>
 
+    <!-- ── Settings ── -->
+    {settings_section}
+
   </div><!-- .col-right -->
 
 </main>
@@ -171,6 +176,51 @@ pub fn render_index(
         },
         disabled = if is_running { "disabled" } else { "" },
         prompts_hint = prompts_hint,
+        settings_section = settings_section,
+    )
+}
+
+// ── Settings section ───────────────────────────────────────────────────────
+
+/// Render the Settings card: the agent run timeout, adjustable at runtime.
+/// The value applies to the next agent run (the running process keeps the
+/// timeout it was started with).
+fn render_settings_section(run_timeout_secs: u64) -> String {
+    let minutes = run_timeout_secs / 60;
+    let seconds_remainder = run_timeout_secs % 60;
+    let display_value = if seconds_remainder == 0 {
+        minutes.to_string()
+    } else {
+        format!("{}.{:02}", minutes, seconds_remainder * 100 / 60)
+    };
+
+    format!(
+        r#"<div class="card">
+      <div class="card-header">
+        <h2>Settings</h2>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="/settings/run-timeout" class="timeout-form">
+          <label for="run-timeout">Agent run timeout (minutes):</label>
+          <div class="timeout-row">
+            <input
+              type="number"
+              id="run-timeout"
+              name="timeout_minutes"
+              min="1"
+              max="1440"
+              step="any"
+              value="{display_value}"
+              required
+            />
+            <button type="submit" class="btn btn-secondary btn-sm">Save</button>
+          </div>
+        </form>
+        <p class="commit-hint" style="margin-top:0.5rem">
+          Applies to the next run; a running process keeps its original limit.
+        </p>
+      </div>
+    </div>"#
     )
 }
 

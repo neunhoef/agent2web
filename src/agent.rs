@@ -24,7 +24,8 @@ pub fn spawn_agent_run(state: Arc<AppState>, prompt: String) {
 // ── Main task ────────────────────────────────────────────────────────────────
 
 async fn run_agent(state: Arc<AppState>, prompt: String) {
-    let timeout_secs = state.config.server.run_timeout;
+    // The timeout is runtime-configurable (web UI); read the current value.
+    let timeout_secs = state.run_timeout();
     let project_dir = state.config.server.project_dir.clone();
     let forge_binary = state.config.forge.binary.clone();
 

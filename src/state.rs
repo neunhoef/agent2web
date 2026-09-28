@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -155,6 +156,10 @@ pub struct AppState {
     pub prompts_since_commit: Mutex<Vec<String>>,
     /// Application configuration (read-only after startup).
     pub config: Config,
+    /// Effective agent run timeout in seconds. Initialised from
+    /// `config.server.run_timeout` and mutable at runtime via the web UI
+    /// (`POST /settings/run-timeout`).  Read at spawn time by each run.
+    pub run_timeout_secs: AtomicU64,
     /// Broadcast channel for SSE live output. The agent task sends one message
     /// per output line, plus `"__DONE__"` when the run ends. SSE subscribers
     /// forward messages to browser clients.
@@ -167,6 +172,16 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Effective run timeout in seconds (see `run_timeout_secs`).
+    pub fn run_timeout(&self) -> u64 {
+        self.run_timeout_secs.load(Ordering::Relaxed)
+    }
+
+    /// Update the effective run timeout in seconds.
+    pub fn set_run_timeout(&self, secs: u64) {
+        self.run_timeout_secs.store(secs, Ordering::Relaxed);
+    }
+
     pub fn new(config: Config) -> Arc<Self> {
         let (sse_tx, _) = broadcast::channel(SSE_CHANNEL_CAPACITY);
         let stt = crate::stt::build_provider(&config.stt);
@@ -174,6 +189,7 @@ impl AppState {
             run: Mutex::new(RunState::default()),
             conv: Mutex::new(ConvState::default()),
             prompts_since_commit: Mutex::new(Vec::new()),
+            run_timeout_secs: AtomicU64::new(config.server.run_timeout),
             config,
             sse_tx,
             stt,

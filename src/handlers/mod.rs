@@ -5,4 +5,5 @@ pub mod diff;
 pub mod health;
 pub mod index;
 pub mod run;
+pub mod settings;
 pub mod stream;
