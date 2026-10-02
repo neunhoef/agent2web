@@ -5,6 +5,8 @@
 //!      a subject input, and an optional prompt-body preview.
 //!   2. `POST /commit` — stages the selected files, builds the commit message,
 //!      runs `git commit`, clears the prompt accumulator, and redirects to `/`.
+//!   3. `POST /push` — runs `git push` in the project directory and redirects
+//!      back to the commit page (or renders an error page on failure).
 
 use std::sync::Arc;
 
@@ -335,6 +337,88 @@ pub async fn post_commit(State(state): State<Arc<AppState>>, body: Bytes) -> Res
     }
 
     Redirect::to("/").into_response()
+}
+
+// ── POST /push ────────────────────────────────────────────────────────────────
+
+/// `POST /push` — run `git push` in the project directory.
+///
+/// Requires the shared password (when configured) and refuses to run while an
+/// agent run is in progress.  On success the user is redirected back to the
+/// commit page; on failure an error page shows git's output.
+pub async fn post_push(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    // ── Password check ────────────────────────────────────────────────────
+    let password = form_password(&body);
+    if let Some(err) = auth::check_password(&state.config.server, &password) {
+        return err;
+    }
+
+    // ── Reject if a run is in progress ────────────────────────────────────
+    {
+        let run = state.run.lock().expect("run mutex poisoned");
+        if run.status.is_running() {
+            return (
+                StatusCode::CONFLICT,
+                Html(templates::render_error(
+                    409,
+                    "Cannot push while an agent run is in progress.",
+                )),
+            )
+                .into_response();
+        }
+    }
+
+    let project_dir = state.config.server.project_dir.clone();
+
+    // ── git push ──────────────────────────────────────────────────────────
+    let output = match Command::new("git")
+        .current_dir(&project_dir)
+        .args(["push"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(error = %e, "Failed to spawn git push");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(templates::render_error(
+                    500,
+                    &format!("git push failed to start: {e}"),
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let details = format!("{}\n{}", stdout.trim(), stderr.trim());
+        warn!(details = %details, "git push exited with non-zero status");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Html(templates::render_error(
+                500,
+                &format!("git push failed: {}", details.trim()),
+            )),
+        )
+            .into_response();
+    }
+
+    info!("Push succeeded");
+
+    Redirect::to("/commit").into_response()
+}
+
+/// Extract the `password` field from a form-urlencoded body (empty if absent).
+fn form_password(body: &[u8]) -> String {
+    form_urlencoded::parse(body)
+        .find(|(key, _)| key == "password")
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_default()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

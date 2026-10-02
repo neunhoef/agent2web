@@ -32,6 +32,7 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/commit",
             get(handlers::commit::get_commit).post(handlers::commit::post_commit),
         )
+        .route("/push", post(handlers::commit::post_push))
         // ── Conversation management ───────────────────────────────────────
         .route(
             "/conversation/new",

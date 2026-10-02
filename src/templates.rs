@@ -400,7 +400,12 @@ pub fn render_commit_page(
             {commit_button}
             <a href="/diff" class="btn btn-secondary">&#x1F50D; View Diff</a>
           </div>
+        </form>
 
+        <!-- Push button (independent of the commit form) -->
+        <form method="POST" action="/push" style="margin-top:0.75rem">
+          {push_password_hidden}
+          <button type="submit" class="btn btn-secondary">&#x2191; Push to Remote</button>
         </form>
       </div>
     </div>
@@ -425,6 +430,11 @@ pub fn render_commit_page(
         },
         password_hidden = if password_enabled {
             r#"<input type="hidden" name="password" id="commit-password" />"#
+        } else {
+            ""
+        },
+        push_password_hidden = if password_enabled {
+            r#"<input type="hidden" name="password" id="push-password" />"#
         } else {
             ""
         },
